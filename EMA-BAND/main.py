@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging,os,threading
+from datetime import datetime,timezone
 from config import SETTINGS,check_env_permissions
 from core.engine import Engine
 from core.persistence import Store
@@ -26,11 +27,65 @@ def main():
  command_stop=threading.Event()
  def telegram_command(command):
   kill_path=SETTINGS.log_dir.parent/SETTINGS.kill_switch_file
+  def fmt_time(value):
+   try: return datetime.fromtimestamp(float(value)/1000,timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+   except Exception: return '--'
+  def health():
+   try: market='UP' if engine.ws_market.is_connected() else 'DOWN'
+   except Exception: market='UNKNOWN'
+   if SETTINGS.enable_live_trading:
+    try: private='UP' if engine.ws_private.is_connected() else 'DOWN'
+    except Exception: private='UNKNOWN'
+   else: private='DISABLED'
+   return (f'Health: {"RUNNING" if engine.running else "STOPPED"}\n'
+           f'Market stream: {market}\nPrivate stream: {private}\n'
+           f'Last error: {engine.last_error or "none"}\n'
+           f'Pending orders: {len(engine.pending)}\nOpen lots: {len(engine.lots)}')
+  def positions():
+   if not engine.positions: return 'Positions: none'
+   rows=['Positions:']
+   for position in engine.positions.values():
+    rows.append(f'{position.symbol} {position.side} qty={position.qty:g} entry={position.entry_price:g} managed={position.managed}')
+   return '\n'.join(rows)
+  def pnl():
+   try:
+    equity,available=engine.bybit.get_balance()
+    exchange_positions=engine.bybit.get_positions()
+    unrealized=sum(float(row.get('unrealisedPnl') or 0) for row in exchange_positions)
+   except Exception as exc:
+    return f'PnL unavailable: {exc}'
+   today=datetime.now(timezone.utc).date()
+   realized=0.0
+   for trade in engine.store.recent_trades(500):
+    try:
+     if datetime.fromtimestamp(float(trade.get('closed_at_ms',0))/1000,timezone.utc).date()==today:
+      realized+=float(trade.get('pnl') or 0)
+    except Exception: pass
+   return f'PnL UTC today\nEquity: {equity:.4f} USDT\nAvailable: {available:.4f} USDT\nRealized: {realized:.4f} USDT\nUnrealized: {unrealized:.4f} USDT'
+  def trades():
+   rows=engine.store.recent_trades(5)
+   if not rows: return 'Recent trades: none'
+   return 'Recent trades:\n'+'\n'.join(f'{fmt_time(row.get("closed_at_ms"))} {row.get("symbol")} {row.get("side")} pnl={float(row.get("pnl") or 0):.4f}' for row in rows)
+  def pending():
+   if not engine.pending: return 'Pending orders: none'
+   return 'Pending orders:\n'+'\n'.join(f'{row.symbol} {row.action} {row.status} qty={row.requested_qty:g}' for row in list(engine.pending.values())[:10])
+  def alerts():
+   rows=engine.store.recent_alerts(5)
+   if not rows: return 'Recent alerts: none'
+   return 'Recent alerts:\n'+'\n'.join(f'{fmt_time(row.get("ts_ms"))} {row.get("kind")} {row.get("symbol") or ""}' for row in rows)
   if command=='/help':
-   return '/start - allow new entries\n/stop - block new entries\n/status - show bot status\n/help - show this message'
+   return ('/start - allow new entries\n/stop - block new entries\n/status - show bot status\n'
+           '/health - show streams and errors\n/positions - show open positions\n/pnl - show account PnL\n'
+           '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n/help - show this message')
   if command=='/status':
    gate='BLOCKED' if kill_path.exists() else 'ENABLED'
    return engine.status_message('STATUS')+f'\nNew entries: {gate}\nOpen lots: {len(engine.lots)}'
+  if command=='/health': return health()
+  if command=='/positions': return positions()
+  if command=='/pnl': return pnl()
+  if command=='/trades': return trades()
+  if command=='/pending': return pending()
+  if command=='/alerts': return alerts()
   if command=='/stop':
    kill_path.touch(exist_ok=True)
    return '🛑 New entries blocked. Existing positions remain open and are still managed.'

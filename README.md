@@ -59,6 +59,12 @@ When Telegram credentials are configured, commands from the configured chat are 
 /start   allow new entries
 /stop    block new entries; existing positions remain managed
 /status  show mode, gate state, and open lots
+/health  show engine and websocket health
+/positions show open positions
+/pnl     show account and daily PnL
+/trades  show the five most recent trades
+/pending show pending orders
+/alerts  show recent execution alerts
 /help    show available commands
 ```
 
