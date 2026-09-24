@@ -18,7 +18,11 @@ def main():
   if not startup_error:
    try: engine.heartbeat()
    except Exception as exc: engine.running=False; engine.last_error=str(exc); logging.critical('Trading engine stopped: %s',exc,exc_info=True)
- t=threading.Thread(target=run,name='trading-engine',daemon=True); t.start(); ready.wait(); app=create_app(engine)
+ t=threading.Thread(target=run,name='trading-engine',daemon=True); t.start(); ready.wait()
+ if startup_error:
+  engine.stop(); store.close()
+  raise RuntimeError('Trading engine failed to start') from startup_error[0]
+ app=create_app(engine)
  try:
   from waitress import serve; serve(app,host=SETTINGS.dashboard_host,port=SETTINGS.dashboard_port,threads=4) # type: ignore
  finally: engine.stop(); t.join(timeout=10); store.close()

@@ -324,7 +324,8 @@ class Engine:
     candle_start=signal.candle_start,
     created_at_ms=int(time.time()*1000),
     cycle_id=cycle,
-    lot_id=lot_id
+    lot_id=lot_id,
+    status='SUBMITTING'
    )
 
    self.pending[p.order_id]=p
@@ -404,7 +405,7 @@ class Engine:
    if not force and (not lot.exit_armed or self._estimated_net(lot,price)<=0): return
    if any(p.action=='EXIT' and p.symbol==lot.symbol and p.side==lot.side and p.status in ACTIVE for p in self.pending.values()): return
    if not self.settings.enable_live_trading: self.close_lot_paper(lot,price,reason); return
-   link=f'EMA-X-{lot.symbol}-{int(time.time()*1000)}-{uuid.uuid4().hex[:5]}'[:36]; p=PendingOrder('SUBMITTING:'+uuid.uuid4().hex,link,lot.symbol,lot.side,'EXIT',0,lot.qty,reason=reason,created_at_ms=int(time.time()*1000),lot_id=lot.lot_id); self.pending[p.order_id]=p; self.store.save_pending(p)
+   link=f'EMA-X-{lot.symbol}-{int(time.time()*1000)}-{uuid.uuid4().hex[:5]}'[:36]; p=PendingOrder('SUBMITTING:'+uuid.uuid4().hex,link,lot.symbol,lot.side,'EXIT',0,lot.qty,reason=reason,created_at_ms=int(time.time()*1000),lot_id=lot.lot_id,status='SUBMITTING'); self.pending[p.order_id]=p; self.store.save_pending(p)
    try: r=self.bybit.close_market(lot.symbol,lot.side,lot.qty,link,0); oid=r['result']['orderId']
    except Exception as exc:
     self.store.event('EXIT_SUBMISSION_UNCERTAIN',{'error':str(exc),'order_link_id':link,'lot_id':lot.lot_id},lot.symbol,lot.side)
@@ -610,6 +611,7 @@ class Engine:
 
 
  def heartbeat(self):
+     consecutive_errors=0
      while self.running:
          try:
              now=time.time()
@@ -676,9 +678,14 @@ class Engine:
                  self.pnl_review()
                  self.last_pnl_review=now
 
+             consecutive_errors=0
          except Exception:
              import logging
              logging.getLogger("TRADING_ENGINE").exception("heartbeat error")
+             consecutive_errors+=1
+             if consecutive_errors>=3:
+                 self.running=False
+                 raise RuntimeError('heartbeat failed three consecutive times')
 
          time.sleep(float(self.settings.scanner_interval_seconds))
  def _hb_usd(self,x):

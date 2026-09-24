@@ -61,6 +61,29 @@ touch EMERGENCY_STOP
 
 Remove the file only after reviewing the account and logs.
 
+## VPS systemd Deployment
+
+The repository includes a hardened service template at `deploy/ema-band.service`. It runs as a dedicated non-root user, restarts after process failure, and allows writes only to `data/` and `logs/`.
+
+On the VPS, use an installation such as:
+
+```bash
+sudo useradd --system --home /opt/ema-band --shell /usr/sbin/nologin emabot
+sudo mkdir -p /opt/ema-band
+sudo chown -R emabot:emabot /opt/ema-band
+sudo cp deploy/ema-band.service /etc/systemd/system/ema-band.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now ema-band
+sudo systemctl status ema-band
+sudo journalctl -u ema-band -f
+```
+
+Before enabling it, copy the application to `/opt/ema-band/EMA-BAND`, create `/opt/ema-band/.venv`, create the private `.env`, and run `chmod 600 /opt/ema-band/EMA-BAND/.env`. Access the dashboard through an SSH tunnel instead of opening port 8080 in the VPS firewall:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 user@your-vps
+```
+
 ## Backtesting
 
 ```bash

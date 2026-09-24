@@ -1,0 +1,33 @@
+[Unit]
+Description=EMA-BAND Bybit trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=emabot
+Group=emabot
+WorkingDirectory=/opt/ema-band/EMA-BAND
+EnvironmentFile=/opt/ema-band/EMA-BAND/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/ema-band/.venv/bin/python /opt/ema-band/EMA-BAND/main.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+KillSignal=SIGINT
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/opt/ema-band/EMA-BAND/data /opt/ema-band/EMA-BAND/logs
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
