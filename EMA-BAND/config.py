@@ -120,10 +120,9 @@ class Settings:
   return e
 
 def check_env_permissions(logger=None):
- """Warn (never block) if the .env file is readable by group/other on POSIX
- systems -- it holds the Bybit API secret and Telegram bot token in plain
- text. No-op on Windows (permission bits don't map the same way) and if the
- file simply doesn't exist yet."""
+ """Reject a .env file that is accessible by group/other on POSIX systems.
+ The file holds the Bybit API secret and Telegram bot token in plain text.
+ No-op on Windows and if the file does not exist yet."""
  import stat,platform
  env_path=ROOT/'.env'
  if platform.system()=='Windows' or not env_path.exists():
@@ -131,13 +130,14 @@ def check_env_permissions(logger=None):
  try:
   mode=env_path.stat().st_mode
   if mode & (stat.S_IRWXG|stat.S_IRWXO):
-   msg=(f"SECURITY WARNING: {env_path} is readable by group/other "
+     msg=(f"SECURITY ERROR: {env_path} is accessible by group/other "
         f"(mode {oct(mode)[-3:]}). It contains your Bybit API secret and "
         f"Telegram token. Run: chmod 600 {env_path}")
-   if logger: logger.warning(msg)
-   else: print(msg)
- except OSError:
-  pass
+     if logger: logger.error(msg)
+     raise PermissionError(msg)
+ except OSError as exc:
+   if isinstance(exc, PermissionError):
+    raise
 
 SETTINGS=Settings(); SETTINGS.log_dir.mkdir(parents=True,exist_ok=True); SETTINGS.database_path.parent.mkdir(parents=True,exist_ok=True)
 

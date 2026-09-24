@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from flask import Flask, jsonify, render_template_string, request
+import logging
 import math
 import time
 from datetime import datetime, timezone
+
+
+log = logging.getLogger('DASHBOARD')
 
 
 HTML = r'''
@@ -479,8 +483,9 @@ def create_app(engine):
                     limit=limit,
                 )
             ).get("result", {}).get("list", [])
-        except Exception as exc:
-            return jsonify({"error": str(exc), "symbol": symbol, "candles": []}), 200
+        except Exception:
+          log.exception("Failed to load candles for %s", symbol)
+          return jsonify({"error": "Market data temporarily unavailable", "symbol": symbol, "candles": []}), 200
 
         # Bybit returns newest first.
         rows = list(reversed(rows))
