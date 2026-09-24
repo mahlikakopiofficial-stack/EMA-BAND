@@ -72,6 +72,7 @@ class Settings:
  telegram_hourly_pnl:bool=field(default_factory=lambda:_bool('TELEGRAM_HOURLY_PNL',True))          # "PnL 1h"
  telegram_pnl_interval_seconds:int=field(default_factory=lambda:_int('TELEGRAM_PNL_INTERVAL_SECONDS',3600))
  telegram_notify_start_stop:bool=field(default_factory=lambda:_bool('TELEGRAM_NOTIFY_START_STOP',True))
+ telegram_commands_enabled:bool=field(default_factory=lambda:_bool('TELEGRAM_COMMANDS_ENABLED',True))
 
  # --- Security ---
  kill_switch_file:str=field(default_factory=lambda:_str('KILL_SWITCH_FILE','EMERGENCY_STOP'))       # touch this file to block all new entries

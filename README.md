@@ -53,6 +53,17 @@ python3 main.py
 
 The dashboard is available at <http://127.0.0.1:8080> by default. Do not expose this port publicly.
 
+When Telegram credentials are configured, commands from the configured chat are supported:
+
+```text
+/start   allow new entries
+/stop    block new entries; existing positions remain managed
+/status  show mode, gate state, and open lots
+/help    show available commands
+```
+
+Telegram commands control the trading gate only. They cannot start a stopped VPS process; use `systemd` for process recovery. Messages queued before startup are ignored.
+
 To stop new entries without stopping the process:
 
 ```bash
