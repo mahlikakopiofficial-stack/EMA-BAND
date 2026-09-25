@@ -76,9 +76,21 @@ def main():
    return 'Recent alerts:\n'+'\n'.join(f'{fmt_time(row.get("ts_ms"))} {row.get("kind")} {row.get("symbol") or ""}' for row in rows)
   def scan():
    try:
-    line=engine._ema_status_line()
-    colored=line.replace('=WARMUP','🔵 =WARMUP').replace('SIGNAL','🟢 SIGNAL').replace(' wait',' 🟡 wait').replace('=ERR(','🔴 =ERR(')
-    return 'Scanner: ACTIVE\n'+colored
+    line=engine._ema_status_line(); rows=[]; cursor=0
+    for symbol in SETTINGS.symbols:
+     start=line.find(symbol,cursor)
+     if start<0: continue
+     end=len(line)
+     for next_symbol in SETTINGS.symbols:
+      next_start=line.find(next_symbol,start+len(symbol))
+      if next_start>=0: end=min(end,next_start)
+     row=line[start:end].strip(); cursor=end
+     if '=WARMUP' in row: label='🔵 WARMUP'
+     elif '=ERR(' in row: label='🔴 ERROR'
+     elif 'SIGNAL' in row: label='🟢 BUY SIGNAL'
+     else: label='🟡 WAIT'
+     rows.append(f'{label} | {row.replace("SIGNAL","BUY SIGNAL").replace("wait","WAIT")}')
+    return '📡 EMA-BAND SCANNER\n'+'\n'.join(rows or ['⚠️ No symbol data'])
    except Exception as exc: return f'Scanner: ERROR\n{exc}'
   def full_status():
    gate='BLOCKED' if kill_path.exists() else 'ENABLED'
