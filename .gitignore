@@ -1,0 +1,25 @@
+# VPS environment
+.venv/
+.cache/
+EMA-BAND-broken/
+
+# Production secrets
+EMA-BAND/.env
+EMA-BAND/.env.*
+!EMA-BAND/.env.example
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+
+# Runtime logs and databases
+EMA-BAND/logs/
+EMA-BAND/data/*.db
+EMA-BAND/data/*.db-shm
+EMA-BAND/data/*.db-wal
+
+# Local IDE / OS
+**/.vscode/
+**/.idea/
+.DS_Store
+Thumbs.db
