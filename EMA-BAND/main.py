@@ -5,13 +5,14 @@ from config import SETTINGS,check_env_permissions
 from core.engine import Engine
 from core.persistence import Store
 from core.telegram import Telegram
+from core.digitalocean import DigitalOceanClient
 from web.dashboard import create_app
 logging.basicConfig(level=logging.INFO,format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
 def main():
  if SETTINGS.require_env_file_permissions_check: check_env_permissions(logging.getLogger('SECURITY'))
  config_errors=SETTINGS.validate()
  if config_errors: raise RuntimeError('Configuration errors: '+'; '.join(config_errors))
- store=Store(SETTINGS.database_path); telegram=Telegram(SETTINGS.telegram_bot_token,SETTINGS.telegram_chat_id); engine=Engine(SETTINGS,store,telegram); startup_error=[]; ready=threading.Event()
+ store=Store(SETTINGS.database_path); telegram=Telegram(SETTINGS.telegram_bot_token,SETTINGS.telegram_chat_id); digitalocean=DigitalOceanClient(SETTINGS.digitalocean_api_token,SETTINGS.digitalocean_droplet_id); engine=Engine(SETTINGS,store,telegram); startup_error=[]; ready=threading.Event()
  def run():
   try: engine.start()
   except Exception as exc: engine.running=False; engine.last_error=str(exc); startup_error.append(exc); logging.critical('TRADING DISABLED: %s',exc,exc_info=True)
@@ -73,19 +74,34 @@ def main():
    rows=engine.store.recent_alerts(5)
    if not rows: return 'Recent alerts: none'
    return 'Recent alerts:\n'+'\n'.join(f'{fmt_time(row.get("ts_ms"))} {row.get("kind")} {row.get("symbol") or ""}' for row in rows)
+  def full_status():
+   gate='BLOCKED' if kill_path.exists() else 'ENABLED'
+   return (engine.status_message('FULL STATUS')+'\n'
+     +health()+'\n'
+     +f'New entries: {gate}\n'
+     +f'Open positions: {len(engine.positions)}\n'
+     +pnl()+'\n'
+     +positions()+'\n'
+     +pending()+'\n'
+     +digitalocean.summary())
   if command=='/help':
-   return ('/start - allow new entries\n/stop - block new entries\n/status - show bot status\n'
+   return ('/start - allow new entries\n/stop - block new entries\n/status - show bot status\n/fullstatus - complete bot and cloud status\n'
            '/health - show streams and errors\n/positions - show open positions\n/pnl - show account PnL\n'
-           '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n/help - show this message')
+       '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n'
+       '/digitalocean - show DigitalOcean connection, billing, and droplets\n'
+       '/do - alias for /digitalocean\n/test - verify Telegram notifications\n/help - show this message')
   if command=='/status':
    gate='BLOCKED' if kill_path.exists() else 'ENABLED'
    return engine.status_message('STATUS')+f'\nNew entries: {gate}\nOpen lots: {len(engine.lots)}'
+  if command=='/fullstatus': return full_status()
   if command=='/health': return health()
   if command=='/positions': return positions()
   if command=='/pnl': return pnl()
   if command=='/trades': return trades()
   if command=='/pending': return pending()
   if command=='/alerts': return alerts()
+  if command in {'/digitalocean','/do'}: return digitalocean.summary()
+  if command=='/test': return f'✅ Telegram test successful\nUTC: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}'
   if command=='/stop':
    kill_path.touch(exist_ok=True)
    return '🛑 New entries blocked. Existing positions remain open and are still managed.'

@@ -73,6 +73,8 @@ class Settings:
  telegram_pnl_interval_seconds:int=field(default_factory=lambda:_int('TELEGRAM_PNL_INTERVAL_SECONDS',3600))
  telegram_notify_start_stop:bool=field(default_factory=lambda:_bool('TELEGRAM_NOTIFY_START_STOP',True))
  telegram_commands_enabled:bool=field(default_factory=lambda:_bool('TELEGRAM_COMMANDS_ENABLED',True))
+ digitalocean_api_token:str=field(default_factory=lambda:os.getenv('DIGITALOCEAN_API_TOKEN','').strip())
+ digitalocean_droplet_id:str=field(default_factory=lambda:os.getenv('DIGITALOCEAN_DROPLET_ID','').strip())
 
  # --- Security ---
  kill_switch_file:str=field(default_factory=lambda:_str('KILL_SWITCH_FILE','EMERGENCY_STOP'))       # touch this file to block all new entries
