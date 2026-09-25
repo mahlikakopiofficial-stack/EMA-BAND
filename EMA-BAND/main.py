@@ -74,6 +74,12 @@ def main():
    rows=engine.store.recent_alerts(5)
    if not rows: return 'Recent alerts: none'
    return 'Recent alerts:\n'+'\n'.join(f'{fmt_time(row.get("ts_ms"))} {row.get("kind")} {row.get("symbol") or ""}' for row in rows)
+  def scan():
+   try:
+    line=engine._ema_status_line()
+    colored=line.replace('=WARMUP','🔵 =WARMUP').replace('SIGNAL','🟢 SIGNAL').replace(' wait',' 🟡 wait').replace('=ERR(','🔴 =ERR(')
+    return 'Scanner: ACTIVE\n'+colored
+   except Exception as exc: return f'Scanner: ERROR\n{exc}'
   def full_status():
    gate='BLOCKED' if kill_path.exists() else 'ENABLED'
    return (engine.status_message('FULL STATUS')+'\n'
@@ -83,11 +89,13 @@ def main():
      +pnl()+'\n'
      +positions()+'\n'
      +pending()+'\n'
+           +scan()+'\n'
      +digitalocean.summary())
   if command=='/help':
    return ('/start - allow new entries\n/stop - block new entries\n/status - show bot status\n/fullstatus - complete bot and cloud status\n'
            '/health - show streams and errors\n/positions - show open positions\n/pnl - show account PnL\n'
        '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n'
+           '/scan - scan all configured symbols now\n'
        '/digitalocean - show DigitalOcean connection, billing, and droplets\n'
        '/do - alias for /digitalocean\n/test - verify Telegram notifications\n/help - show this message')
   if command=='/status':
@@ -100,6 +108,7 @@ def main():
   if command=='/trades': return trades()
   if command=='/pending': return pending()
   if command=='/alerts': return alerts()
+  if command=='/scan': return scan()
   if command in {'/digitalocean','/do'}: return digitalocean.summary()
   if command=='/test': return f'✅ Telegram test successful\nUTC: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}'
   if command=='/stop':

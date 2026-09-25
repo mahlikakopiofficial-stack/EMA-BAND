@@ -8,7 +8,9 @@ class Telegram:
     def send(self,text):
         if not self.enabled: return False
         try:
-            r=requests.post(f'https://api.telegram.org/bot{self.token}/sendMessage',json={'chat_id':self.chat_id,'text':text},timeout=10); r.raise_for_status(); return True
+            for start in range(0,len(text),3900):
+                r=requests.post(f'https://api.telegram.org/bot{self.token}/sendMessage',json={'chat_id':self.chat_id,'text':text[start:start+3900]},timeout=10); r.raise_for_status()
+            return True
         except Exception as exc: log.warning('Telegram send failed: %s',exc); return False
     def start_command_listener(self, handler, stop_event):
         if not self.enabled: return None
