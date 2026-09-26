@@ -219,7 +219,7 @@ class Engine:
     log.error('ENTRY_GATE %s: could not verify live price (%s), refusing entry to stay safe',signal.symbol,exc)
     return False
    try:
-    _,available=self.bybit.get_balance()
+    total_equity,available=self.bybit.get_balance()
     log.warning(
      'ENTRY_GATE %s balance=%.8f size_pct=%.4f min_trade=%.4f',
      signal.symbol,
@@ -258,6 +258,34 @@ class Engine:
      'LONG'
     )
     log.warning('%s LONG entry blocked: %s',signal.symbol,reason)
+    return False
+
+   proposed_notional=float(qty)*float(signal.close)
+   equity=float(total_equity)
+   leverage=max(float(self.settings.leverage),1.0)
+   open_notional=sum(float(l.qty)*float(l.entry_price) for l in self.lots.values() if l.status=='OPEN')
+   pending_notional=sum(float(p.requested_qty)*float(p.avg_fill_price or signal.close) for p in self.pending.values() if p.action=='ENTRY' and p.status in ACTIVE)
+   reserved_notional=open_notional+pending_notional
+   configured_cap=float(getattr(self.settings,'max_account_exposure_usdt',0.0) or 0.0)
+   exposure_cap=equity*leverage
+   if configured_cap>0:
+    exposure_cap=min(exposure_cap,configured_cap)
+   if equity<=0:
+    self.store.event('RISK_BLOCK',{'reason':'insufficient_equity','equity':equity},signal.symbol,'LONG')
+    log.warning('ENTRY_GATE EQUITY BLOCKED %s: equity=%.8f',signal.symbol,equity)
+    return False
+   if reserved_notional+proposed_notional>exposure_cap+EPSILON:
+    reason='max_exposure'
+    self.store.event('RISK_BLOCK',{'reason':reason,'equity':equity,'leverage':leverage,'reserved_notional':reserved_notional,'proposed_notional':proposed_notional,'exposure_cap':exposure_cap},signal.symbol,'LONG')
+    log.warning('ENTRY_GATE EXPOSURE BLOCKED %s: reserved=%.8f proposed=%.8f cap=%.8f',signal.symbol,reserved_notional,proposed_notional,exposure_cap)
+    return False
+   used_margin=reserved_notional/leverage
+   available_margin=max(0.0,min(float(available),equity-used_margin))
+   required_margin=proposed_notional/leverage
+   if required_margin>available_margin+EPSILON:
+    reason='insufficient_margin'
+    self.store.event('RISK_BLOCK',{'reason':reason,'required_margin':required_margin,'available_margin':available_margin,'equity':equity,'reserved_notional':reserved_notional},signal.symbol,'LONG')
+    log.warning('ENTRY_GATE MARGIN BLOCKED %s: required=%.8f available=%.8f',signal.symbol,required_margin,available_margin)
     return False
 
    ok,reason=self.risk.validate_order(
@@ -320,6 +348,7 @@ class Engine:
     'ENTRY',
     0,
     qty,
+    avg_fill_price=signal.close,
     reason='entry_signal',
     candle_start=signal.candle_start,
     created_at_ms=int(time.time()*1000),
