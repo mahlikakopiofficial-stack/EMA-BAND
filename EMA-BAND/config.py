@@ -28,6 +28,7 @@ class Settings:
  max_long_entries:int=field(default_factory=lambda:_int('MAX_LONG_ENTRIES',999))         # "Max trade per asset, 999"
  min_trade_usdt:float=field(default_factory=lambda:_float('MIN_TRADE_USDT',5.0))          # "Minimum position 5 usdt"
  max_order_notional_usdt:float=field(default_factory=lambda:_float('MAX_ORDER_NOTIONAL_USDT',0))  # 0 = disabled; hard cap per order as a fat-finger/config-bug guard
+ max_account_exposure_usdt:float=field(default_factory=lambda:_float('MAX_ACCOUNT_EXPOSURE_USDT',0))  # 0 = starting capital x leverage
 
  # --- Leverage & risk ---
  leverage:int=field(default_factory=lambda:_int('LEVERAGE',3))                          # "Leverage 3x"

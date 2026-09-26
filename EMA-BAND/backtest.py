@@ -95,6 +95,10 @@ MAX_TOTAL_OPEN_LOTS = int(
     getattr(SETTINGS, "max_total_open_lots", 50)
 )
 
+MAX_ACCOUNT_EXPOSURE_USDT = float(
+    getattr(SETTINGS, "max_account_exposure_usdt", 0.0)
+)
+
 LEVERAGE = float(
     getattr(SETTINGS, "leverage", 3.0)
 )
@@ -169,6 +173,11 @@ class Portfolio:
     entry_count: int = 0
     skipped_entries: int = 0
     skipped_min_trade: int = 0
+    rejected_entries_by_reason: Dict[str, int] = field(default_factory=dict)
+    max_used_margin: float = 0.0
+    max_open_notional: float = 0.0
+    max_account_leverage: float = 0.0
+    max_concurrent_lots: int = 0
 
     lots: List[Lot] = field(default_factory=list)
     closed_trades: List[ClosedTrade] = field(default_factory=list)
@@ -631,6 +640,13 @@ def current_equity(
     return equity
 
 
+def unrealized_pnl(
+    portfolio: Portfolio,
+    prices: Dict[str, float],
+) -> float:
+    return current_equity(portfolio, prices) - portfolio.cash
+
+
 def margin_in_use(
     portfolio: Portfolio,
 ) -> float:
@@ -645,6 +661,22 @@ def margin_in_use(
         leverage
         for lot in portfolio.lots
     )
+
+
+def open_notional(portfolio: Portfolio) -> float:
+    return sum(lot.notional for lot in portfolio.lots)
+
+
+def allowed_exposure(portfolio: Portfolio, prices: Dict[str, float]) -> float:
+    equity_limit = max(0.0, current_equity(portfolio, prices)) * max(LEVERAGE, 1.0)
+    if MAX_ACCOUNT_EXPOSURE_USDT > 0:
+        configured_limit = min(MAX_ACCOUNT_EXPOSURE_USDT, equity_limit)
+    else:
+        configured_limit = equity_limit
+
+    # Losses can make existing positions temporarily exceed the new equity-based
+    # limit; block further entries rather than failing to account for them.
+    return max(configured_limit, open_notional(portfolio))
 
 
 def available_margin(
@@ -669,6 +701,41 @@ def available_margin(
         0.0,
         equity -
         used_margin,
+    )
+
+
+def record_rejection(portfolio: Portfolio, reason: str) -> None:
+    portfolio.skipped_entries += 1
+    portfolio.rejected_entries_by_reason[reason] = (
+        portfolio.rejected_entries_by_reason.get(reason, 0) + 1
+    )
+
+
+def assert_account_invariants(portfolio: Portfolio, prices: Dict[str, float]) -> None:
+    tolerance = 1e-8
+    used_margin = margin_in_use(portfolio)
+    exposure = open_notional(portfolio)
+    allowed_margin = max(0.0, allowed_exposure(portfolio, prices) / max(LEVERAGE, 1.0))
+    assert used_margin <= allowed_margin + tolerance, (
+        f"used margin {used_margin} exceeds allowed margin {allowed_margin}"
+    )
+    assert exposure <= allowed_exposure(portfolio, prices) + tolerance, (
+        f"open exposure {exposure} exceeds allowed exposure {allowed_exposure(portfolio, prices)}"
+    )
+    assert all(lot.notional > 0 and lot.qty > 0 for lot in portfolio.lots)
+    assert abs(sum(lot.notional / max(LEVERAGE, 1.0) for lot in portfolio.lots) - used_margin) <= tolerance
+
+
+def update_account_diagnostics(portfolio: Portfolio, prices: Dict[str, float]) -> None:
+    used_margin = margin_in_use(portfolio)
+    exposure = open_notional(portfolio)
+    equity = current_equity(portfolio, prices)
+    portfolio.max_used_margin = max(portfolio.max_used_margin, used_margin)
+    portfolio.max_open_notional = max(portfolio.max_open_notional, exposure)
+    portfolio.max_concurrent_lots = max(portfolio.max_concurrent_lots, len(portfolio.lots))
+    portfolio.max_account_leverage = max(
+        portfolio.max_account_leverage,
+        exposure / equity if equity > 0 else 0.0,
     )
 
 
@@ -1162,6 +1229,7 @@ def main():
 
     # Last candle index a symbol had an entry attempt, for COOLDOWN_CANDLES.
     last_entry_idx: Dict[str, int] = {symbol: -10**9 for symbol in frames}
+    account_halted = False
 
     # --------------------------------------------------------
     # PROCESS
@@ -1331,27 +1399,11 @@ def main():
             if current_idx is None:
                 continue
 
-            # Max lots per symbol.
-            if (
-                len(open_lots[symbol])
-                >= MAX_LONG_ENTRIES
-            ):
-                continue
-
-            # Global lot cap.
             portfolio.lots = [
                 lot
                 for lots in open_lots.values()
                 for lot in lots
             ]
-
-            if (
-                MAX_TOTAL_OPEN_LOTS > 0
-                and
-                len(portfolio.lots)
-                >= MAX_TOTAL_OPEN_LOTS
-            ):
-                continue
 
             # Per-symbol cooldown (COOLDOWN_CANDLES since last entry attempt).
             if (current_idx - last_entry_idx[symbol]) < COOLDOWN_CANDLES:
@@ -1362,6 +1414,28 @@ def main():
 
             last_entry_idx[symbol] = current_idx
 
+            if account_halted:
+                record_rejection(portfolio, "insufficient_equity")
+                continue
+
+            if len(open_lots[symbol]) >= MAX_LONG_ENTRIES:
+                record_rejection(portfolio, "max_positions")
+                continue
+
+            if MAX_TOTAL_OPEN_LOTS > 0 and len(portfolio.lots) >= MAX_TOTAL_OPEN_LOTS:
+                record_rejection(portfolio, "max_positions")
+                continue
+
+            equity = current_equity(portfolio, last_prices)
+            if equity <= 0:
+                account_halted = True
+                record_rejection(portfolio, "insufficient_equity")
+                continue
+
+            if LEVERAGE < 1:
+                record_rejection(portfolio, "leverage_limit")
+                continue
+
             available = (
                 available_margin(
                     portfolio,
@@ -1369,11 +1443,41 @@ def main():
                 )
             )
 
+            leverage_headroom = max(
+                0.0,
+                equity * max(LEVERAGE, 1.0) - open_notional(portfolio),
+            )
+            if leverage_headroom <= 0:
+                record_rejection(portfolio, "leverage_limit")
+                continue
+
+            exposure_headroom = max(
+                0.0,
+                min(
+                    allowed_exposure(portfolio, last_prices) - open_notional(portfolio),
+                    leverage_headroom,
+                ),
+            )
+
+            if available <= 0:
+                record_rejection(portfolio, "insufficient_margin")
+                continue
+
+            if exposure_headroom <= 0:
+                record_rejection(portfolio, "max_exposure")
+                continue
+
             target_notional = (
                 available *
+                max(LEVERAGE, 1.0) *
                 POSITION_SIZE_PCT /
                 100.0
             )
+            target_notional = min(target_notional, exposure_headroom)
+
+            max_order_notional = float(getattr(SETTINGS, "max_order_notional_usdt", 0.0))
+            if max_order_notional > 0:
+                target_notional = min(target_notional, max_order_notional)
 
             if (
                 target_notional <
@@ -1382,6 +1486,9 @@ def main():
 
                 portfolio.skipped_entries += 1
                 portfolio.skipped_min_trade += 1
+                portfolio.rejected_entries_by_reason["insufficient_margin"] = (
+                    portfolio.rejected_entries_by_reason.get("insufficient_margin", 0) + 1
+                )
                 continue
 
             price = safe_float(
@@ -1390,7 +1497,7 @@ def main():
 
             if price <= 0:
 
-                portfolio.skipped_entries += 1
+                record_rejection(portfolio, "risk_gate")
                 continue
 
             qty = (
@@ -1410,7 +1517,7 @@ def main():
                 MIN_TRADE_USDT
             ):
 
-                portfolio.skipped_entries += 1
+                record_rejection(portfolio, "insufficient_margin")
                 continue
 
             entry_fee = (
@@ -1423,7 +1530,7 @@ def main():
                 entry_fee
             ):
 
-                portfolio.skipped_entries += 1
+                record_rejection(portfolio, "insufficient_equity")
                 continue
 
             lot = Lot(
@@ -1454,6 +1561,9 @@ def main():
                 symbol
             ].append(lot)
 
+            update_account_diagnostics(portfolio, last_prices)
+            assert_account_invariants(portfolio, last_prices)
+
         # ----------------------------------------------------
         # MARK TO MARKET
         # ----------------------------------------------------
@@ -1468,6 +1578,9 @@ def main():
             portfolio,
             last_prices,
         )
+
+        update_account_diagnostics(portfolio, last_prices)
+        assert_account_invariants(portfolio, last_prices)
 
         portfolio.equity_curve.append(
             (
@@ -1502,6 +1615,16 @@ def main():
             last_prices,
         )
     )
+
+    update_account_diagnostics(portfolio, last_prices)
+    assert_account_invariants(portfolio, last_prices)
+
+    equity_values = [value for _, value in portfolio.equity_curve]
+    peak_equity = max(equity_values, default=ending_equity)
+    minimum_equity = min(equity_values, default=ending_equity)
+    ending_used_margin = margin_in_use(portfolio)
+    ending_open_notional = open_notional(portfolio)
+    ending_available_margin = max(0.0, ending_equity - ending_used_margin)
 
     unrealized_net = (
         ending_equity -
@@ -1878,6 +2001,9 @@ def main():
             "starting_capital":
                 args.capital,
 
+            "starting_equity":
+                args.capital,
+
             "ending_equity":
                 ending_equity,
 
@@ -1898,6 +2024,30 @@ def main():
 
             "fees_paid":
                 portfolio.fees_paid,
+
+            "peak_equity":
+                peak_equity,
+
+            "minimum_equity":
+                minimum_equity,
+
+            "used_margin_at_end":
+                ending_used_margin,
+
+            "available_margin_at_end":
+                ending_available_margin,
+
+            "maximum_used_margin":
+                portfolio.max_used_margin,
+
+            "maximum_open_notional":
+                portfolio.max_open_notional,
+
+            "maximum_account_leverage":
+                portfolio.max_account_leverage,
+
+            "maximum_concurrent_lots":
+                portfolio.max_concurrent_lots,
 
             "entries":
                 portfolio.entry_count,
@@ -1929,6 +2079,9 @@ def main():
             "total_open_position_value_usdt":
                 total_open_notional,
 
+            "total_exposure_at_end":
+                ending_open_notional,
+
             "max_drawdown_pct_realized_only":
                 realized_max_drawdown,
 
@@ -1948,6 +2101,9 @@ def main():
 
             "skipped_min_trade":
                 portfolio.skipped_min_trade,
+
+            "rejected_entries_by_reason":
+                portfolio.rejected_entries_by_reason,
         },
 
         "symbols":
