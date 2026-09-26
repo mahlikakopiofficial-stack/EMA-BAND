@@ -644,7 +644,11 @@ def unrealized_pnl(
     portfolio: Portfolio,
     prices: Dict[str, float],
 ) -> float:
-    return current_equity(portfolio, prices) - portfolio.cash
+    return (
+        current_equity(portfolio, prices)
+        - portfolio.starting_capital
+        - portfolio.realized_pnl
+    )
 
 
 def margin_in_use(
@@ -1628,7 +1632,8 @@ def main():
 
     unrealized_net = (
         ending_equity -
-        portfolio.cash
+        portfolio.starting_capital -
+        portfolio.realized_pnl
     )
 
     total_net_pnl = (
@@ -1783,6 +1788,7 @@ def main():
             lot.symbol
         ] += (
             gross -
+            lot.entry_fee -
             estimated_exit_fee
         )
 
@@ -2300,4 +2306,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+    main()
