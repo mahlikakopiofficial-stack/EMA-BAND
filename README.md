@@ -126,7 +126,7 @@ ssh -N -L 8080:127.0.0.1:8080 user@your-vps
 python3 backtest.py
 ```
 
-Backtest reports are written under `backtest_reports/`.
+Backtest results are printed to the console; no report files are saved.
 The backtest uses the same merged weighted-average entry, liquidation-buffer
 formula, and per-symbol lot cap as the live engine. A short validation run can
 be limited to one symbol:

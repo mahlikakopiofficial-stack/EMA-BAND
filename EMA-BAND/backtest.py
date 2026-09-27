@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -1777,58 +1776,6 @@ def main():
 
     total_open_notional = sum(symbol_open_notional.values())
 
-    # ========================================================
-    # REPORTS
-    # ========================================================
-
-    reports_dir = (
-        ROOT /
-        "backtest_reports"
-    )
-
-    reports_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------------
-    # TRADES
-    # --------------------------------------------------------
-
-    trade_rows = []
-
-    for trade in (
-        portfolio.closed_trades
-    ):
-
-        data = asdict(
-            trade
-        )
-
-        data[
-            "entry_time_utc"
-        ] = utc_string(
-            trade.entry_ts
-        )
-
-        data[
-            "exit_time_utc"
-        ] = utc_string(
-            trade.exit_ts
-        )
-
-        trade_rows.append(
-            data
-        )
-
-    pd.DataFrame(
-        trade_rows
-    ).to_csv(
-        reports_dir /
-        "ema_rsi_shared_trades.csv",
-        index=False,
-    )
-
     # --------------------------------------------------------
     # SYMBOL SUMMARY
     # --------------------------------------------------------
@@ -1905,20 +1852,6 @@ def main():
             }
         )
 
-    summary_df = pd.DataFrame(
-        summary_rows
-    )
-
-    summary_df.to_csv(
-        reports_dir /
-        "ema_rsi_shared_summary.csv",
-        index=False,
-    )
-
-    # --------------------------------------------------------
-    # JSON
-    # --------------------------------------------------------
-
     closed_win_rate = (
         portfolio.closed_wins /
         portfolio.closed_trades_count *
@@ -1926,190 +1859,6 @@ def main():
     ) if (
         portfolio.closed_trades_count
     ) else 0.0
-
-    report = {
-
-        "period": {
-            "days":
-                args.days,
-            "timeframe_minutes":
-                15,
-            "start_utc":
-                utc_string(
-                    test_start_ms
-                ),
-            "end_utc":
-                utc_string(
-                    test_end_ms
-                ),
-        },
-
-        "strategy": {
-
-            "mode":
-                STRATEGY_MODE,
-
-            "ema_fast":
-                EMA_FAST,
-
-            "ema_slow":
-                EMA_SLOW,
-
-            "ema_period":
-                EMA_PERIOD,
-
-            "rsi_period":
-                RSI_PERIOD,
-
-            "entry_rsi":
-                ENTRY_RSI,
-
-            "exit_rsi":
-                EXIT_RSI,
-
-            "cooldown_candles":
-                COOLDOWN_CANDLES,
-
-            "exit_candles":
-                EXIT_CANDLES,
-
-            "liquidation_buffer_pct":
-                LIQUIDATION_BUFFER_PCT,
-
-            "maintenance_margin_rate":
-                MAINTENANCE_MARGIN_RATE,
-
-            "enable_long":
-                ENABLE_LONG,
-
-            "enable_short":
-                False,
-        },
-
-        "portfolio": {
-
-            "starting_capital":
-                args.capital,
-
-            "starting_equity":
-                args.capital,
-
-            "ending_equity":
-                ending_equity,
-
-            "realized_net_pnl":
-                portfolio.realized_pnl,
-
-            "unrealized_net_pnl":
-                unrealized_net,
-
-            "total_net_pnl":
-                total_net_pnl,
-
-            "return_pct":
-                total_return,
-
-            "max_drawdown_pct":
-                max_drawdown,
-
-            "fees_paid":
-                portfolio.fees_paid,
-
-            "peak_equity":
-                peak_equity,
-
-            "minimum_equity":
-                minimum_equity,
-
-            "used_margin_at_end":
-                ending_used_margin,
-
-            "available_margin_at_end":
-                ending_available_margin,
-
-            "maximum_used_margin":
-                portfolio.max_used_margin,
-
-            "maximum_open_notional":
-                portfolio.max_open_notional,
-
-            "maximum_account_leverage":
-                portfolio.max_account_leverage,
-
-            "maximum_concurrent_lots":
-                portfolio.max_concurrent_lots,
-
-            "entries":
-                portfolio.entry_count,
-
-            "closed_trades":
-                portfolio.closed_trades_count,
-
-            "closed_wins":
-                portfolio.closed_wins,
-
-            "closed_losses":
-                portfolio.closed_losses,
-
-            "closed_win_rate_pct":
-                closed_win_rate,
-
-            "avg_loss_usdt":
-                avg_loss,
-
-            "avg_win_usdt":
-                avg_win,
-
-            "worst_trade_usdt":
-                worst_trade,
-
-            "best_trade_usdt":
-                best_trade,
-
-            "total_open_position_value_usdt":
-                total_open_notional,
-
-            "total_exposure_at_end":
-                ending_open_notional,
-
-            "max_drawdown_pct_realized_only":
-                realized_max_drawdown,
-
-            "max_drawdown_pct_mark_to_market":
-                max_drawdown,
-
-            "stops":
-                portfolio.stop_count,
-
-            "open_lots_at_end":
-                len(
-                    portfolio.lots
-                ),
-
-            "skipped_entries":
-                portfolio.skipped_entries,
-
-            "skipped_min_trade":
-                portfolio.skipped_min_trade,
-
-            "rejected_entries_by_reason":
-                portfolio.rejected_entries_by_reason,
-        },
-
-        "symbols":
-            symbols,
-    }
-
-    (
-        reports_dir /
-        "ema_rsi_shared_report.json"
-    ).write_text(
-        json.dumps(
-            report,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     # ========================================================
     # CONSOLE
@@ -2263,25 +2012,6 @@ def main():
 
     print(
         "NO LIVE ORDERS WERE SENT."
-    )
-
-    print(
-        "\nREPORT FILES:"
-    )
-
-    print(
-        reports_dir /
-        "ema_rsi_shared_summary.csv"
-    )
-
-    print(
-        reports_dir /
-        "ema_rsi_shared_trades.csv"
-    )
-
-    print(
-        reports_dir /
-        "ema_rsi_shared_report.json"
     )
 
 
