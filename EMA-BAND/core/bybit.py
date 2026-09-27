@@ -83,6 +83,7 @@ class BybitAdapter:
         lev = str(leverage)
         try:
             r = self.http.set_leverage(category='linear', symbol=symbol,
+                                        tradeMode=1,
                                         buyLeverage=lev, sellLeverage=lev)
             if r.get('retCode', 0) not in (0, 110043):
                 self._ok(r)
@@ -180,9 +181,12 @@ class BybitAdapter:
         self._refresh_http_if_needed()
         
         def fetch():
-            return self._ok(
+            rows = self._ok(
                 self.http.get_positions(category='linear', settleCoin='USDT')
             ).get('result', {}).get('list', [])
+            for row in rows:
+                row['liqPrice'] = float(row.get('liqPrice') or 0)
+            return rows
         
         return self._with_retry(fetch, max_retries=2)
     
@@ -400,4 +404,3 @@ class BybitAdapter:
             return result
         
         return self._with_retry(close, max_retries=2)
-

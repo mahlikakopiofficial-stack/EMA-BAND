@@ -7,6 +7,7 @@ from .risk import RiskManager
 from .bybit import BybitAdapter
 from .telegram import Telegram
 from .websocket import MarketStream,PrivateStream
+from .liquidation import liquidation_exit_price, weighted_average_entry
 from strategies.ema_strategies import EMABandStrategy,EMARSIOversoldStrategy
 log=logging.getLogger('TRADING_ENGINE'); ACTIVE={'NEW','PARTIAL','SUBMITTING'}
 EPSILON=1e-9  # unified epsilon for float comparisons
@@ -92,7 +93,7 @@ class Engine:
    strat_txt=f'UNKNOWN MODE {sm}'
   return (f'{icon} {title}\nMode: {mode}\nSymbols: {", ".join(self.settings.symbols)}\nTF: 15m\n'
    f'Strategy: {strat_txt}\n'
-   f'Leverage: {self.settings.leverage}x | Hard Stop-Loss: {self.settings.stop_loss_pct:.0f}%\n'
+   f'Leverage: {self.settings.leverage}x | Liquidation buffer: {getattr(self.settings,"liquidation_buffer_pct",30):.0f}%\n'
    f'Max trades/asset: {self.settings.max_long_entries} | Min trade: {self.settings.min_trade_usdt:.2f} USDT\n'
    f'Scanner: {self.settings.scanner_interval_seconds:.1f}s | Position Mode: ONE-WAY')
  def _frame(self,s): return self.strategy.enrich(pd.DataFrame(list(self.candles[s])))
@@ -120,17 +121,20 @@ class Engine:
  def _check_exits_locked(self,s,price,row=None):
   candle_ms=int(self.settings.timeframe)*60*1000
   current_candle_start=int(row['start']) if row is not None and 'start' in row else None
+  merged=self.positions.get((s,'LONG'))
+  if merged and merged.managed and merged.qty>EPSILON and merged.entry_price>EPSILON and merged.liq_price>EPSILON:
+   exit_price=liquidation_exit_price(
+    merged.entry_price,merged.liq_price,
+    getattr(self.settings,'liquidation_buffer_pct',30.0),
+   )
+   if price<=exit_price:
+    self.store.event('LIQUIDATION_BUFFER_EXIT',{'price':price,'exit_price':exit_price,'avg_entry_price':merged.entry_price,'liq_price':merged.liq_price,'qty':merged.qty},s,'LONG')
+    log.warning('LIQUIDATION BUFFER EXIT %s: price=%.8f <= exit=%.8f, closing merged qty %.8f',s,price,exit_price,merged.qty)
+    self.telegram.send(f'⚠️ LIQUIDATION BUFFER EXIT\n{s} LONG\nPrice: {price:.8f}\nTrigger: {exit_price:.8f}\nClosing merged position.')
+    self.request_close_merged(s,'LONG',merged.qty,price,'liquidation_buffer_exit')
+    return
   for lot in sorted([x for x in self.lots.values() if x.symbol==s and x.status=='OPEN'],key=lambda x:x.entry_time_ms):
    if any(p.action=='EXIT' and p.symbol==s and p.side==lot.side and p.status in ACTIVE for p in self.pending.values()): continue
-   # HARD STOP LOSS: unconditional, bypasses exit_armed/profit gate, applies to every strategy.
-   if lot.side=='LONG' and lot.entry_price>EPSILON:
-    loss_pct=(lot.entry_price-price)/lot.entry_price*100.0
-    if loss_pct>=self.settings.stop_loss_pct:
-     log.warning('HARD STOP LOSS %s: loss=%.2f%% >= limit %.2f%% (lot=%s)',s,loss_pct,self.settings.stop_loss_pct,lot.lot_id)
-     self.store.event('HARD_STOP_LOSS',{'lot_id':lot.lot_id,'price':price,'loss_pct':loss_pct,'limit_pct':self.settings.stop_loss_pct},s,lot.side)
-     self.telegram.send(f'🛑 HARD STOP LOSS TRIGGERED\n{s} {lot.side}\nLoss: {loss_pct:.2f}% (limit {self.settings.stop_loss_pct:.0f}%)\nClosing at market.')
-     self.request_close_lot(lot,price,'hard_stop_loss',force=True)
-     continue
    candles_elapsed=10**9
    if current_candle_start is not None and lot.entry_candle_start:
     candles_elapsed=max(0,(current_candle_start-lot.entry_candle_start)//candle_ms)
@@ -152,7 +156,10 @@ class Engine:
    return  # still inside post-entry cooldown window for this symbol
   active=self.store.lot_count(s,'LONG'); pending=sum(1 for p in self.pending.values() if p.action=='ENTRY' and p.symbol==s and p.side=='LONG' and p.status in ACTIVE)
   self.long_entry_counts[s]=active
-  if active+pending>=self.settings.max_long_entries: return
+  if active+pending>=self.settings.max_long_entries:
+   self.store.event('RISK_BLOCK',{'reason':'max_long_entries_per_symbol','open_lots':active,'pending_entries':pending,'limit':self.settings.max_long_entries},s,'LONG')
+   log.warning('ENTRY_GATE %s: max long entries per symbol reached (%d/%d)',s,active+pending,self.settings.max_long_entries)
+   return
   submitted=self.open_position(sig)
   if submitted:
    self.last_scanner_entry_candle[s]=int(sig.candle_start)
@@ -163,6 +170,12 @@ class Engine:
 
  def open_position(self,signal):
   with self.lock:
+   open_lots=sum(1 for x in self.lots.values() if x.symbol==signal.symbol and x.side=='LONG' and x.status=='OPEN')
+   pending_lots=sum(1 for p in self.pending.values() if p.action=='ENTRY' and p.symbol==signal.symbol and p.side=='LONG' and p.status in ACTIVE)
+   if open_lots+pending_lots>=self.settings.max_long_entries:
+    self.store.event('RISK_BLOCK',{'reason':'max_long_entries_per_symbol','open_lots':open_lots,'pending_entries':pending_lots,'limit':self.settings.max_long_entries},signal.symbol,'LONG')
+    log.warning('ENTRY_GATE %s: max long entries per symbol reached (%d/%d)',signal.symbol,open_lots+pending_lots,self.settings.max_long_entries)
+    return False
    kill_path=self.settings.log_dir.parent/self.settings.kill_switch_file
    if kill_path.exists():
     if not self._kill_switch_alerted:
@@ -442,12 +455,31 @@ class Engine:
     self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{lot.symbol} {lot.side}\nReason: {reason}\nError: {str(exc)[:150]}\nBot will re-check with Bybit and retry automatically.')
     return
    lot.exit_order_id=oid; self.store.save_lot(lot); self._replace_pending(p,oid)
+ def request_close_merged(self,s,side,qty,price,reason):
+  with self.lock:
+   if any(p.action=='EXIT' and p.symbol==s and p.side==side and p.status in ACTIVE for p in self.pending.values()): return
+   lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']
+   if not lots: return
+   if not self.settings.enable_live_trading:
+    for lot in lots: self.close_lot_paper(lot,price,reason)
+    return
+   link=f'EMA-X-{s}-{int(time.time()*1000)}-{uuid.uuid4().hex[:5]}'[:36]
+   p=PendingOrder('SUBMITTING:'+uuid.uuid4().hex,link,s,side,'EXIT',0,qty,reason=reason,created_at_ms=int(time.time()*1000),status='SUBMITTING')
+   self.pending[p.order_id]=p; self.store.save_pending(p)
+   try:
+    r=self.bybit.close_market(s,side,qty,link,0); oid=r['result']['orderId']
+   except Exception as exc:
+    self.store.event('EXIT_SUBMISSION_UNCERTAIN',{'error':str(exc),'order_link_id':link},s,side)
+    log.error('Merged EXIT submission failed for %s %s: %s',s,side,exc)
+    self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{s} {side}\nReason: {reason}\nError: {str(exc)[:150]}')
+    return
+   self._replace_pending(p,oid)
  def close_lot_paper(self,lot,price,reason):
   pnl=self._estimated_net(lot,price); fee=lot.entry_fee+abs(price*lot.qty)*self.settings.taker_fee_rate; self.store.trade(Trade(lot.symbol,lot.side,lot.qty,lot.entry_price,price,pnl,fee,lot.entry_time_ms,int(time.time()*1000),lot.cycle_id,reason,lot.entry_order_id,'PAPER-EXIT')); self.store.delete_lot(lot.lot_id); self.lots.pop(lot.lot_id,None); self._rebuild_position(lot.symbol,lot.side); self.telegram.send(f'{"🟢" if pnl>=0 else "🔴"} PAPER EXIT\n{lot.symbol} {lot.side}\nQty: {lot.qty}\nExit: {price}\nPnL: {pnl:.6f}\nReason: {reason}')
  def _rebuild_position(self,s,side):
   lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']; key=(s,side)
   if not lots: self.positions.pop(key,None); self.store.delete_position(s,side); self.long_entry_counts[s]=0; return
-  qty=sum(x.qty for x in lots); avg=(sum(x.qty*x.entry_price for x in lots)/qty) if qty>EPSILON else 0.0; first=min(lots,key=lambda x:x.entry_time_ms); p=Position(s,side,qty,avg,first.entry_time_ms,first.entry_order_id,first.cycle_id,0,True,entry_fee=sum(x.entry_fee for x in lots),entry_count=len(lots)); self.positions[key]=p; self.store.save_position(p); self.long_entry_counts[s]=len(lots)
+  qty=sum(x.qty for x in lots); avg=weighted_average_entry(lots); first=min(lots,key=lambda x:x.entry_time_ms); p=Position(s,side,qty,avg,first.entry_time_ms,first.entry_order_id,first.cycle_id,0,True,entry_fee=sum(x.entry_fee for x in lots),entry_count=len(lots)); self.positions[key]=p; self.store.save_position(p); self.long_entry_counts[s]=len(lots)
  def on_order(self,message):
   with self.lock:
    for item in message.get('data',[]):
@@ -475,6 +507,24 @@ class Engine:
   self.store.save_lot(lot); self._rebuild_position(p.symbol,p.side)
   if p.status=='FILLED': self._drop_pending(p); self.telegram.send(f'✅ ENTRY FILLED\n{p.symbol} {p.side}\nQty: {lot.qty}\nPrice: {lot.entry_price}')
  def _apply_exit(self,p):
+  if not p.lot_id:
+   lots=sorted([x for x in self.lots.values() if x.symbol==p.symbol and x.side==p.side and x.status=='OPEN'],key=lambda x:x.entry_time_ms)
+   remaining=max(0.0,p.filled_qty-p.processed_fill_qty)
+   fee_remaining=max(0.0,p.fee-p.processed_fill_fee)
+   for lot in lots:
+    if remaining<=1e-12: break
+    before=lot.qty; inc=min(remaining,before); fee=fee_remaining*(inc/p.filled_qty) if p.filled_qty else 0.0
+    px=p.avg_fill_price or lot.entry_price
+    gross=(px-lot.entry_price)*inc if lot.side=='LONG' else (lot.entry_price-px)*inc
+    alloc=lot.entry_fee*(inc/before) if before else 0.0
+    self.store.trade(Trade(lot.symbol,lot.side,inc,lot.entry_price,px,gross-alloc-fee,alloc+fee,lot.entry_time_ms,int(time.time()*1000),lot.cycle_id,p.reason,lot.entry_order_id,p.order_id))
+    lot.qty-=inc; lot.entry_fee=max(0,lot.entry_fee-alloc); remaining-=inc; fee_remaining-=fee
+    if lot.qty<=1e-12: self.store.delete_lot(lot.lot_id); self.lots.pop(lot.lot_id,None)
+    else: self.store.save_lot(lot)
+   p.processed_fill_qty=p.filled_qty; p.processed_fill_fee=p.fee; self.store.save_pending(p)
+   self._rebuild_position(p.symbol,p.side)
+   if p.status in {'FILLED','CANCELLED','REJECTED'}: self._drop_pending(p)
+   return
   lot=self.lots.get(p.lot_id)
   if not lot: self._drop_pending(p); return
   inc=max(0,p.filled_qty-p.processed_fill_qty); fee=max(0,p.fee-p.processed_fill_fee)
@@ -493,7 +543,7 @@ class Engine:
     if s not in self.settings.symbols or not side: continue
     key=(s,side)
     if q<=0: continue
-    old=self.positions.get(key); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); p=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); p.qty=q; p.entry_price=entry; p.position_idx=0; p.managed=managed; self.positions[key]=p; self.store.save_position(p)
+    old=self.positions.get(key); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); liq=float(item.get('liqPrice') or (old.liq_price if old else 0)); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); p=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); p.qty=q; p.entry_price=entry; p.liq_price=liq; p.position_idx=0; p.managed=managed; self.positions[key]=p; self.store.save_position(p)
  def reconcile(self):
   with self.lock:
    exchange={}
@@ -501,7 +551,7 @@ class Engine:
    for item in raw_positions:
     s=item.get('symbol'); raw=item.get('side'); q=float(item.get('size') or 0); side='LONG' if raw=='Buy' else 'SHORT' if raw=='Sell' else None
     if s not in self.settings.symbols or not side or q<=0: continue
-    key=(s,side); old=self.positions.get(key); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); exchange[key]=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); exchange[key].qty=q; exchange[key].entry_price=entry; exchange[key].managed=managed; self.store.save_position(exchange[key])
+    key=(s,side); old=self.positions.get(key); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); liq=float(item.get('liqPrice') or (old.liq_price if old else 0)); exchange[key]=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); exchange[key].qty=q; exchange[key].entry_price=entry; exchange[key].liq_price=liq; exchange[key].managed=managed; self.store.save_position(exchange[key])
    # Never silently forget a managed local position when an exit/order is still unresolved.
    for key,old in self.positions.items():
     if key not in exchange and (any(l.symbol==key[0] and l.side==key[1] for l in self.lots.values()) or any(p.action=='EXIT' and p.symbol==key[0] and p.side==key[1] and p.status in ACTIVE for p in self.pending.values())): exchange[key]=old
@@ -1094,9 +1144,6 @@ class Engine:
  def run(self):
      self.start()
      self.heartbeat()
-
-
-
 
 
 

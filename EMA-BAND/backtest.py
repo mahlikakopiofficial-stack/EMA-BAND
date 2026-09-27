@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
 from config import SETTINGS  # noqa: E402
+from core.liquidation import (
+    estimated_liquidation_price,
+    liquidation_exit_price,
+    weighted_average_entry,
+)
 
 
 # ============================================================
@@ -107,9 +112,8 @@ TAKER_FEE_RATE = float(
     getattr(SETTINGS, "taker_fee_rate", 0.00055)
 )
 
-STOP_LOSS_PCT = float(
-    getattr(SETTINGS, "stop_loss_pct", 80.0)
-)
+LIQUIDATION_BUFFER_PCT = float(getattr(SETTINGS, "liquidation_buffer_pct", 30.0))
+MAINTENANCE_MARGIN_RATE = float(getattr(SETTINGS, "maintenance_margin_rate", 0.005))
 
 ENABLE_LONG = bool(
     getattr(SETTINGS, "enable_long", True)
@@ -982,8 +986,9 @@ def main():
         )
 
     print(
-        f"Hard stop            : "
-        f"{STOP_LOSS_PCT:g}%"
+        f"Liquidation buffer   : "
+        f"{LIQUIDATION_BUFFER_PCT:g}% "
+        f"(maintenance margin {MAINTENANCE_MARGIN_RATE:g})"
     )
 
     print(
@@ -1277,54 +1282,30 @@ def main():
             if current_idx is None:
                 continue
 
-            survivors: List[Lot] = []
-
             current_close = safe_float(
                 row["close"]
             )
 
-            for lot in open_lots[symbol]:
-
-                # --------------------------------------------
-                # HARD STOP
-                # --------------------------------------------
-
-                stop_price = None
-
-                if STOP_LOSS_PCT > 0:
-
-                    stop_price = (
-                        lot.entry_price *
-                        (
-                            1.0 -
-                            STOP_LOSS_PCT /
-                            100.0
+            if open_lots[symbol]:
+                merged_entry = weighted_average_entry(open_lots[symbol])
+                estimated_liq = estimated_liquidation_price(
+                    merged_entry, LEVERAGE, MAINTENANCE_MARGIN_RATE
+                )
+                buffer_exit = liquidation_exit_price(
+                    merged_entry, estimated_liq, LIQUIDATION_BUFFER_PCT
+                )
+                if safe_float(row["low"]) <= buffer_exit:
+                    for lot in open_lots[symbol]:
+                        close_lot(
+                            portfolio, lot, ts, current_idx,
+                            buffer_exit, "LIQUIDATION_BUFFER_EXIT"
                         )
-                    )
-
-                if (
-                    stop_price is not None
-                    and
-                    safe_float(
-                        row["low"]
-                    ) <= stop_price
-                ):
-
-                    close_lot(
-                        portfolio,
-                        lot,
-                        ts,
-                        current_idx,
-                        stop_price,
-                        "STOP",
-                    )
-
-                    symbol_stops[
-                        symbol
-                    ] += 1
-
+                    symbol_stops[symbol] += 1
+                    open_lots[symbol] = []
                     continue
 
+            survivors: List[Lot] = []
+            for lot in open_lots[symbol]:
                 # --------------------------------------------
                 # ESTIMATED NET P&L
                 # --------------------------------------------
@@ -1423,7 +1404,7 @@ def main():
                 continue
 
             if len(open_lots[symbol]) >= MAX_LONG_ENTRIES:
-                record_rejection(portfolio, "max_positions")
+                record_rejection(portfolio, "max_long_entries_per_symbol")
                 continue
 
             if MAX_TOTAL_OPEN_LOTS > 0 and len(portfolio.lots) >= MAX_TOTAL_OPEN_LOTS:
@@ -1992,8 +1973,11 @@ def main():
             "exit_candles":
                 EXIT_CANDLES,
 
-            "hard_stop_pct":
-                STOP_LOSS_PCT,
+            "liquidation_buffer_pct":
+                LIQUIDATION_BUFFER_PCT,
+
+            "maintenance_margin_rate":
+                MAINTENANCE_MARGIN_RATE,
 
             "enable_long":
                 ENABLE_LONG,
@@ -2306,4 +2290,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+    main()

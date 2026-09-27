@@ -3,7 +3,7 @@ from dataclasses import dataclass,asdict
 @dataclass
 class Position:
     symbol:str; side:str; qty:float; entry_price:float; entry_time_ms:int
-    entry_order_id:str=''; cycle_id:str=''; position_idx:int=0; managed:bool=True; unrealized_pnl:float=0.0; realized_pnl:float=0.0; entry_fee:float=0.0; entry_count:int=0
+    entry_order_id:str=''; cycle_id:str=''; position_idx:int=0; managed:bool=True; unrealized_pnl:float=0.0; realized_pnl:float=0.0; entry_fee:float=0.0; entry_count:int=0; liq_price:float=0.0
     def to_dict(self): return asdict(self)
 @dataclass
 class PendingOrder:
@@ -20,4 +20,3 @@ class Trade:
     symbol:str; side:str; qty:float; entry_price:float; exit_price:float; pnl:float; fee:float
     opened_at_ms:int; closed_at_ms:int; cycle_id:str; reason:str; entry_order_id:str=''; exit_order_id:str=''
     def to_dict(self): return asdict(self)
-

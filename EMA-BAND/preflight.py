@@ -84,7 +84,9 @@ def main():
         print(f"    exit                   : RSI{S.ema_rsi_period} >= {S.ema_rsi_exit_rsi:g}, only if profitable")
     print(f"  SYMBOLS ({len(S.symbols):>2})             : {', '.join(S.symbols)}")
     print(f"  LEVERAGE                 : {S.leverage}x")
-    print(f"  STOP_LOSS_PCT            : {S.stop_loss_pct:g}%  (hard force-close, overrides strategy exit)")
+    print(f"  LIQUIDATION_BUFFER_PCT   : {S.liquidation_buffer_pct:g}% of merged-entry/liquidation cushion")
+    print(f"  MAINTENANCE_MARGIN_RATE  : {S.maintenance_margin_rate:g}")
+    print(f"  STOP_LOSS_PCT            : {S.stop_loss_pct:g}%  (deprecated; not used for exits)")
     print(f"  POSITION_SIZE_PCT        : {S.position_size_pct:g}% of available balance per entry")
     print(f"  MIN_TRADE_USDT           : {S.min_trade_usdt:g}")
     print(f"  MAX_LONG_ENTRIES         : {S.max_long_entries} per symbol")
@@ -211,7 +213,7 @@ def main():
             f"Mode: {mode}\n"
             f"Strategy: {S.strategy_mode}\n"
             f"Symbols: {len(S.symbols)}\n"
-            f"Leverage: {S.leverage}x | SL: {S.stop_loss_pct:g}%\n"
+            f"Leverage: {S.leverage}x | Liquidation buffer: {S.liquidation_buffer_pct:g}%\n"
             "If you can read this, alerts are working."
         )
         if sent:
@@ -223,7 +225,7 @@ def main():
         for line in [
             "entry filled / paper entry",
             "trade closed (with PnL and reason)",
-            "HARD STOP LOSS triggered",
+            "liquidation-buffer exit (merged position)",
             f"hourly PnL report ({'ON' if S.telegram_hourly_pnl else 'OFF'}, every {S.telegram_pnl_interval_seconds}s)",
             f"bot start / stop ({'ON' if S.telegram_notify_start_stop else 'OFF'})",
             "kill switch activated / cleared",
@@ -252,4 +254,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

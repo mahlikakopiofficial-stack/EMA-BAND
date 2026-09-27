@@ -25,14 +25,16 @@ class Settings:
 
  # --- Position sizing / caps ---
  position_size_pct:float=field(default_factory=lambda:_float('POSITION_SIZE_PCT',10.0))
- max_long_entries:int=field(default_factory=lambda:_int('MAX_LONG_ENTRIES',999))         # "Max trade per asset, 999"
+ max_long_entries:int=field(default_factory=lambda:_int('MAX_LONG_ENTRIES',5))           # max open lots per symbol
  min_trade_usdt:float=field(default_factory=lambda:_float('MIN_TRADE_USDT',5.0))          # "Minimum position 5 usdt"
  max_order_notional_usdt:float=field(default_factory=lambda:_float('MAX_ORDER_NOTIONAL_USDT',0))  # 0 = disabled; hard cap per order as a fat-finger/config-bug guard
  max_account_exposure_usdt:float=field(default_factory=lambda:_float('MAX_ACCOUNT_EXPOSURE_USDT',0))  # 0 = starting capital x leverage
 
  # --- Leverage & risk ---
  leverage:int=field(default_factory=lambda:_int('LEVERAGE',3))                          # "Leverage 3x"
- stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',30.0))         # "SL 30%" - hard circuit breaker, independent of strategy exit logic
+ liquidation_buffer_pct:float=field(default_factory=lambda:_float('LIQUIDATION_BUFFER_PCT',30.0))
+ maintenance_margin_rate:float=field(default_factory=lambda:_float('MAINTENANCE_MARGIN_RATE',0.005))
+ stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',80.0))         # deprecated; retained for compatibility
  max_daily_loss_usdt:float=field(default_factory=lambda:_float('MAX_DAILY_LOSS_USDT',100))
  max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',15))  # 0=disabled; global cap across ALL symbols
  require_leverage_confirmation:bool=field(default_factory=lambda:_bool('REQUIRE_LEVERAGE_CONFIRMATION',True))  # fail-closed: block a symbol if its leverage could not be set
@@ -94,6 +96,8 @@ class Settings:
   if self.max_order_notional_usdt<0: e.append('MAX_ORDER_NOTIONAL_USDT must be >=0 (0=disabled)')
   if not 1<=self.leverage<=25: e.append('LEVERAGE must be between 1 and 25')
   if not 1<=self.stop_loss_pct<=99: e.append('STOP_LOSS_PCT must be between 1 and 99')
+  if not 0<=self.liquidation_buffer_pct<=100: e.append('LIQUIDATION_BUFFER_PCT must be in [0,100]')
+  if self.maintenance_margin_rate<0: e.append('MAINTENANCE_MARGIN_RATE must be >=0')
   if self.max_daily_loss_usdt<0: e.append('MAX_DAILY_LOSS_USDT must be >=0 (0=disabled)')
   if self.max_total_open_lots<0: e.append('MAX_TOTAL_OPEN_LOTS must be >=0 (0=disabled)')
   if self.max_entry_price_deviation_pct<=0: e.append('MAX_ENTRY_PRICE_DEVIATION_PCT must be >0')
@@ -144,5 +148,4 @@ def check_env_permissions(logger=None):
     raise
 
 SETTINGS=Settings(); SETTINGS.log_dir.mkdir(parents=True,exist_ok=True); SETTINGS.database_path.parent.mkdir(parents=True,exist_ok=True)
-
 

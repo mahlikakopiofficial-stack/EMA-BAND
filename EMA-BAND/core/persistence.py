@@ -160,6 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms); CREATE INDEX IF NOT E
     # These already land in the events table via self.store.event(...) -- this just
     # reads a filtered, recent slice of them back out.
     ALERT_KINDS=('EXIT_SUBMISSION_UNCERTAIN','ENTRY_SUBMISSION_UNCERTAIN','HARD_STOP_LOSS',
+                 'LIQUIDATION_BUFFER_EXIT',
                  'EXIT_SUBMISSION_TIMEOUT','ENTRY_SUBMISSION_TIMEOUT')
 
     def recent_alerts(self,limit=30):
@@ -191,4 +192,3 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms); CREATE INDEX IF NOT E
                 log.info("✅ Database connection closed")
             except Exception as e:
                 log.error("Error closing database: %s", e)
-
