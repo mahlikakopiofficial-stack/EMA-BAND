@@ -48,7 +48,7 @@ class EMABandStrategy:
               Settings, is the real safety net for that case).
     """
     def __init__(self, ema_fast=200, ema_slow=210, rsi_period=20,
-                 cooldown_candles=5, exit_candles=5, exit_rsi=75.0):
+                 cooldown_candles=5, exit_candles=0, exit_rsi=75.0):
         self.ema_fast = int(ema_fast)
         self.ema_slow = int(ema_slow)
         self.rsi_period = int(rsi_period)

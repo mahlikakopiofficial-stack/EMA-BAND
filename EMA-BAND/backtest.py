@@ -93,11 +93,11 @@ MIN_TRADE_USDT = float(
 )
 
 MAX_LONG_ENTRIES = int(
-    getattr(SETTINGS, "max_long_entries", 999)
+    getattr(SETTINGS, "max_long_entries", 5)
 )
 
 MAX_TOTAL_OPEN_LOTS = int(
-    getattr(SETTINGS, "max_total_open_lots", 50)
+    getattr(SETTINGS, "max_total_open_lots", 15)
 )
 
 MAX_ACCOUNT_EXPOSURE_USDT = float(
