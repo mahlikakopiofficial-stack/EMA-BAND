@@ -40,7 +40,7 @@ class EMABandStrategy:
                  evaluated on that symbol until `cooldown_candles` (5)
                  further confirmed candles have printed. This is enforced
                  by the Engine (see next_entry_allowed_candle), not here.
-      Exit  : only becomes eligible once `exit_candles` (0) candles have
+      Exit  : only becomes eligible once `exit_candles` (5) candles have
               elapsed since the lot's entry candle AND RSI(20) >= exit_rsi
               (75.0). Even once eligible, the Engine will only actually close
               the lot when it is net-profitable; if it is underwater it is
@@ -48,7 +48,7 @@ class EMABandStrategy:
               Settings, is the real safety net for that case).
     """
     def __init__(self, ema_fast=200, ema_slow=210, rsi_period=20,
-                 cooldown_candles=0, exit_candles=0, exit_rsi=75.0):
+                 cooldown_candles=5, exit_candles=5, exit_rsi=75.0):
         self.ema_fast = int(ema_fast)
         self.ema_slow = int(ema_slow)
         self.rsi_period = int(rsi_period)
