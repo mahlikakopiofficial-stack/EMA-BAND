@@ -33,7 +33,22 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
+At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_LONG_ENTRIES`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
+
+The bot uses Bybit's isolated-margin, One-Way position model with the configured
+leverage. Entries on the same symbol are merged by Bybit into one position.
+`MAX_LONG_ENTRIES` limits the number of open lots per symbol (default: `5`),
+while `MAX_ACCOUNT_EXPOSURE_USDT` remains an independent account-wide cap.
+
+The default emergency exit is liquidation-aware: when a merged position reaches
+the configured `LIQUIDATION_BUFFER_PCT` of the distance from its weighted
+average entry to Bybit's live liquidation price, the bot closes the entire
+merged symbol position in one reduce-only market order. In backtests, the
+liquidation price is estimated using `LEVERAGE` and
+`MAINTENANCE_MARGIN_RATE` (default: `0.005`).
+
+`STOP_LOSS_PCT` remains parseable for backward-compatible configuration files,
+but is deprecated and is not used to decide exits.
 
 ## Preflight
 
@@ -43,7 +58,11 @@ Run this before starting the bot:
 python3 preflight.py
 ```
 
-Preflight may contact Bybit and send a Telegram test message when live credentials are configured. It does not place orders unless `--set-leverage` is explicitly supplied, but review its output before proceeding.
+Preflight may contact Bybit and send a Telegram test message when live credentials are configured. It does not place orders unless `--set-leverage` is explicitly supplied, but review its output before proceeding. Use `--set-leverage` intentionally when you want preflight to enforce the configured isolated leverage:
+
+```bash
+python3 preflight.py --set-leverage
+```
 
 ## Run
 
@@ -108,6 +127,13 @@ python3 backtest.py
 ```
 
 Backtest reports are written under `backtest_reports/`.
+The backtest uses the same merged weighted-average entry, liquidation-buffer
+formula, and per-symbol lot cap as the live engine. A short validation run can
+be limited to one symbol:
+
+```bash
+python3 backtest.py --days 1 --symbol BTCUSDT
+```
 
 ## Strategies
 
