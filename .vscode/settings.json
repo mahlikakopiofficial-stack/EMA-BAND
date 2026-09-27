@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd EMA-BAND && python -m py_compile config\\.py backtest\\.py core/\\*\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
