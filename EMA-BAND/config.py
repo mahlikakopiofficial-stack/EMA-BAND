@@ -32,9 +32,9 @@ class Settings:
 
  # --- Leverage & risk ---
  leverage:int=field(default_factory=lambda:_int('LEVERAGE',3))                          # "Leverage 3x"
- stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',80.0))         # "SL 80%" - hard circuit breaker, independent of strategy exit logic
+ stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',30.0))         # "SL 30%" - hard circuit breaker, independent of strategy exit logic
  max_daily_loss_usdt:float=field(default_factory=lambda:_float('MAX_DAILY_LOSS_USDT',100))
- max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',50))  # 0=disabled; global cap across ALL symbols
+ max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',15))  # 0=disabled; global cap across ALL symbols
  require_leverage_confirmation:bool=field(default_factory=lambda:_bool('REQUIRE_LEVERAGE_CONFIRMATION',True))  # fail-closed: block a symbol if its leverage could not be set
  max_entry_price_deviation_pct:float=field(default_factory=lambda:_float('MAX_ENTRY_PRICE_DEVIATION_PCT',1.0))  # reject entry if signal price is stale vs live ticker
  stuck_order_timeout_seconds:int=field(default_factory=lambda:_int('STUCK_ORDER_TIMEOUT_SECONDS',120))  # if an order submission throws and Bybit never shows a matching order, give up waiting after this long so it can be retried instead of blocking entries/exits forever
@@ -50,7 +50,7 @@ class Settings:
  ema_band_slow:int=field(default_factory=lambda:_int('EMA_BAND_SLOW',210))
  ema_band_rsi_period:int=field(default_factory=lambda:_int('EMA_BAND_RSI_PERIOD',20))
  ema_band_cooldown_candles:int=field(default_factory=lambda:_int('EMA_BAND_COOLDOWN_CANDLES',0))
- ema_band_exit_candles:int=field(default_factory=lambda:_int('EMA_BAND_EXIT_CANDLES',0))
+ ema_band_exit_candles:int=field(default_factory=lambda:_int('EMA_BAND_EXIT_CANDLES',5))
  ema_band_exit_rsi:float=field(default_factory=lambda:_float('EMA_BAND_EXIT_RSI',75.0))
 
  ema_rsi_ema_period:int=field(default_factory=lambda:_int('EMA_RSI_EMA_PERIOD',200))
