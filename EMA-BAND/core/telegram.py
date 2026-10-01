@@ -36,8 +36,9 @@ class Telegram:
                     if str(chat.get('id','')) != self.chat_id: continue
                     text=str(message.get('text') or '').strip()
                     if not text.startswith('/'): continue
-                    command=text.split()[0].lower().split('@',1)[0]
-                    reply=handler(command)
+                    parts=text.split()
+                    command=parts[0].lower().split('@',1)[0]
+                    reply=handler(command,parts[1:])
                     if reply: self.send(reply)
                 if discarding_backlog:
                     offset=0 if offset==-1 else offset

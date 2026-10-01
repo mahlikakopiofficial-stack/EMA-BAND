@@ -1,5 +1,5 @@
 from __future__ import annotations
-import logging,os,threading
+import logging,os,subprocess,sys,threading
 from datetime import datetime,timezone
 from config import SETTINGS,check_env_permissions
 from core.engine import Engine
@@ -8,6 +8,22 @@ from core.telegram import Telegram
 from core.digitalocean import DigitalOceanClient
 from web.dashboard import create_app
 logging.basicConfig(level=logging.INFO,format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
+def send_backtest_report(telegram,days):
+ args=[sys.executable,os.path.join(os.path.dirname(__file__),'backtest.py')]
+ if days is not None: args.extend(['--days',str(days)])
+ try:
+  result=subprocess.run(args,cwd=os.path.dirname(__file__),capture_output=True,text=True,timeout=900,check=False)
+ except subprocess.TimeoutExpired:
+  telegram.send('Backtest timed out after 15 minutes.')
+  return
+ except Exception as exc:
+  logging.exception('Telegram backtest failed to start')
+  telegram.send(f'Backtest failed to start: {exc}')
+  return
+ output=result.stdout
+ if result.stderr: output+=('\n' if output else '')+'STDERR:\n'+result.stderr
+ if result.returncode: output=f'Backtest failed (exit code {result.returncode}).\n'+output
+ telegram.send(output or 'Backtest completed with no console output.')
 def main():
  if SETTINGS.require_env_file_permissions_check: check_env_permissions(logging.getLogger('SECURITY'))
  config_errors=SETTINGS.validate()
@@ -26,7 +42,8 @@ def main():
   raise RuntimeError('Trading engine failed to start') from startup_error[0]
  app=create_app(engine)
  command_stop=threading.Event()
- def telegram_command(command):
+ backtest_lock=threading.Lock()
+ def telegram_command(command,arguments=()):
   kill_path=SETTINGS.log_dir.parent/SETTINGS.kill_switch_file
   def fmt_time(value):
    try: return datetime.fromtimestamp(float(value)/1000,timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
@@ -108,6 +125,7 @@ def main():
            '/health - show streams and errors\n/positions - show open positions\n/pnl - show account PnL\n'
        '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n'
            '/scan - scan all configured symbols now\n'
+           '/backtest [days] - run the configured strategy backtest (default 30 days)\n'
        '/digitalocean - show DigitalOcean connection, billing, and droplets\n'
        '/do - alias for /digitalocean\n/test - verify Telegram notifications\n/help - show this message')
   if command=='/status':
@@ -121,6 +139,21 @@ def main():
   if command=='/pending': return pending()
   if command=='/alerts': return alerts()
   if command=='/scan': return scan()
+  if command=='/backtest':
+   days=None
+   if arguments:
+    if len(arguments)==2 and arguments[0]=='--days': raw_days=arguments[1]
+    elif len(arguments)==1: raw_days=arguments[0]
+    else: return 'Usage: /backtest [days] or /backtest --days <days>'
+    try: days=int(raw_days)
+    except ValueError: return 'Backtest days must be a positive whole number.'
+    if days<=0: return 'Backtest days must be a positive whole number.'
+   if not backtest_lock.acquire(blocking=False): return 'A backtest is already running.'
+   def run_backtest():
+    try: send_backtest_report(telegram,days)
+    finally: backtest_lock.release()
+   threading.Thread(target=run_backtest,name='telegram-backtest',daemon=True).start()
+   return f'Backtest started ({days or 30} days). Results will follow here.'
   if command in {'/digitalocean','/do'}: return digitalocean.summary()
   if command=='/test': return f'✅ Telegram test successful\nUTC: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}'
   if command=='/stop':
