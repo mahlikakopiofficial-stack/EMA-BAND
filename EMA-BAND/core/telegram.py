@@ -1,6 +1,23 @@
 from __future__ import annotations
 import logging,requests,threading
 log=logging.getLogger('TELEGRAM')
+BOT_COMMANDS=[
+    {'command':'start','description':'Allow new entries'},
+    {'command':'stop','description':'Block new entries'},
+    {'command':'status','description':'Show bot status'},
+    {'command':'fullstatus','description':'Show complete bot and cloud status'},
+    {'command':'health','description':'Show engine and websocket health'},
+    {'command':'positions','description':'Show open positions'},
+    {'command':'pnl','description':'Show account PnL'},
+    {'command':'trades','description':'Show recent trades'},
+    {'command':'pending','description':'Show pending orders'},
+    {'command':'alerts','description':'Show recent alerts'},
+    {'command':'scan','description':'Scan configured symbols'},
+    {'command':'backtest','description':'Run strategy backtest'},
+    {'command':'digitalocean','description':'Show DigitalOcean status'},
+    {'command':'test','description':'Test Telegram notifications'},
+    {'command':'help','description':'Show available commands'},
+]
 class Telegram:
     def __init__(self,token,chat_id): self.token=token.strip(); self.chat_id=chat_id.strip()
     @property
@@ -12,8 +29,20 @@ class Telegram:
                 r=requests.post(f'https://api.telegram.org/bot{self.token}/sendMessage',json={'chat_id':self.chat_id,'text':text[start:start+3900]},timeout=10); r.raise_for_status()
             return True
         except Exception as exc: log.warning('Telegram send failed: %s',exc); return False
+    def set_commands(self):
+        if not self.enabled: return False
+        try:
+            response=requests.post(f'https://api.telegram.org/bot{self.token}/setMyCommands',json={'commands':BOT_COMMANDS},timeout=10)
+            response.raise_for_status()
+            payload=response.json()
+            if not payload.get('ok'): raise RuntimeError('Telegram setMyCommands returned an unsuccessful response')
+            return True
+        except Exception as exc:
+            log.warning('Telegram command menu registration failed: %s',exc)
+            return False
     def start_command_listener(self, handler, stop_event):
         if not self.enabled: return None
+        self.set_commands()
         thread=threading.Thread(target=self._command_loop,args=(handler,stop_event),name='telegram-commands',daemon=True)
         thread.start()
         return thread
