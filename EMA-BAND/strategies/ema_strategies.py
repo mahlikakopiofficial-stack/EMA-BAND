@@ -36,16 +36,15 @@ class EMABandStrategy:
     """
     STRATEGY A (long only):
       Entry : 15m confirmed close sits between EMA200 and EMA210 (inclusive).
-      Cooldown : after any entry attempt on a symbol, no new entry is
-                 evaluated on that symbol until `cooldown_candles` (5)
-                 further confirmed candles have printed. This is enforced
-                 by the Engine (see next_entry_allowed_candle), not here.
+      Cooldown : after an entry order is accepted for a symbol, no new entry
+                 is evaluated until `cooldown_candles` further confirmed
+                 candles have printed. This is enforced by the Engine.
       Exit  : only becomes eligible once `exit_candles` (5) candles have
               elapsed since the lot's entry candle AND RSI(20) >= exit_rsi
               (75.0). Even once eligible, the Engine will only actually close
               the lot when it is net-profitable; if it is underwater it is
-              held (an independent hard stop-loss, configured separately in
-              Settings, is the real safety net for that case).
+              held; the liquidation-buffer exit is the configured emergency
+              exit for that case.
     """
     def __init__(self, ema_fast=200, ema_slow=210, rsi_period=20,
                  cooldown_candles=5, exit_candles=0, exit_rsi=75.0):
@@ -73,16 +72,23 @@ class EMABandStrategy:
         if candles.empty or len(candles) < self.min_bars:
             return None
         row = self.enrich(candles).iloc[-1]
-        close = float(row['close'])
-        ema_f = float(row['ema_fast'])
-        ema_s = float(row['ema_slow'])
-        if not (math.isfinite(close) and math.isfinite(ema_f) and math.isfinite(ema_s)):
-            return None
-        lo, hi = (ema_f, ema_s) if ema_f <= ema_s else (ema_s, ema_f)
-        if lo <= close <= hi:
+        if self.entry_ready(row):
+            close = float(row['close'])
             return Signal(symbol, 'LONG', int(row['start']), close,
                           f'price_between_ema{self.ema_fast}_ema{self.ema_slow}')
         return None
+
+    def entry_ready(self, row) -> bool:
+        try:
+            close = float(row['close'])
+            ema_f = float(row['ema_fast'])
+            ema_s = float(row['ema_slow'])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not all(math.isfinite(value) for value in (close, ema_f, ema_s)):
+            return False
+        lo, hi = (ema_f, ema_s) if ema_f <= ema_s else (ema_s, ema_f)
+        return lo <= close <= hi
 
     def exit_ready(self, row, candles_elapsed: int) -> bool:
         """True once the time+RSI trigger condition is met (profit check
@@ -103,8 +109,8 @@ class EMARSIOversoldStrategy:
               entry_rsi (45).
       Exit  : becomes eligible once RSI(20) >= exit_rsi (80.0). As with
               Strategy A, the Engine only actually closes once the lot is
-              net-profitable; a hard stop-loss covers the losing case.
-      No cooldown by default (set entry_cooldown_candles=0 in Settings for
+              net-profitable; the liquidation-buffer exit is the emergency exit.
+      No cooldown by default (set ema_rsi_cooldown_candles=0 in Settings for
       this mode unless you want one).
     """
     def __init__(self, ema_period=200, rsi_period=20, entry_rsi=45.0, exit_rsi=80.0):
@@ -128,15 +134,26 @@ class EMARSIOversoldStrategy:
         if candles.empty or len(candles) < self.min_bars:
             return None
         row = self.enrich(candles).iloc[-1]
-        close = float(row['close'])
-        ema = float(row['ema'])
-        rsi = float(row['rsi'])
-        if not (math.isfinite(close) and math.isfinite(ema) and math.isfinite(rsi)):
-            return None
-        if close > ema and rsi < self.entry_rsi:
+        if self.entry_ready(row):
+            close = float(row['close'])
             return Signal(symbol, 'LONG', int(row['start']), close,
                           f'price_above_ema{self.ema_period}_rsi_below_{int(self.entry_rsi)}')
         return None
+
+    def entry_ready(self, row) -> bool:
+        try:
+            close = float(row['close'])
+            ema = float(row['ema'])
+            rsi = float(row['rsi'])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            math.isfinite(close)
+            and math.isfinite(ema)
+            and math.isfinite(rsi)
+            and close > ema
+            and rsi < self.entry_rsi
+        )
 
     def exit_ready(self, row, candles_elapsed: int) -> bool:
         try:
@@ -146,4 +163,3 @@ class EMARSIOversoldStrategy:
         if not math.isfinite(rsi):
             return False
         return rsi >= self.exit_rsi
-

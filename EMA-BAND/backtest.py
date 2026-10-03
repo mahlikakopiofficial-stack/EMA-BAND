@@ -5,6 +5,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -22,6 +23,7 @@ from core.liquidation import (
     liquidation_exit_price,
     weighted_average_entry,
 )
+from strategies.ema_strategies import EMABandStrategy, EMARSIOversoldStrategy
 
 
 # ============================================================
@@ -65,8 +67,10 @@ else:  # 'ema_rsi'
     EMA_FAST = EMA_PERIOD
     EMA_SLOW = EMA_PERIOD
 
-# Extra history needed before the test window.
-WARMUP_BARS = max(EMA_FAST, EMA_SLOW) + RSI_PERIOD + 20
+# The live engine seeds indicators with 500 Bybit candles at startup.
+# Use the same history before the test window so long EMA values are seeded
+# from a comparable amount of data.
+WARMUP_BARS = max(500, max(EMA_FAST, EMA_SLOW) + RSI_PERIOD + 20)
 
 # Bybit request settings
 BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
@@ -103,6 +107,10 @@ MAX_ACCOUNT_EXPOSURE_USDT = float(
     getattr(SETTINGS, "max_account_exposure_usdt", 0.0)
 )
 
+MAX_DAILY_LOSS_USDT = float(
+    getattr(SETTINGS, "max_daily_loss_usdt", 0.0)
+)
+
 LEVERAGE = float(
     getattr(SETTINGS, "leverage", 3.0)
 )
@@ -117,6 +125,49 @@ MAINTENANCE_MARGIN_RATE = float(getattr(SETTINGS, "maintenance_margin_rate", 0.0
 ENABLE_LONG = bool(
     getattr(SETTINGS, "enable_long", True)
 )
+
+
+@lru_cache(maxsize=8)
+def _strategy_for(
+    mode: str,
+    ema_fast: int,
+    ema_slow: int,
+    ema_period: int,
+    rsi_period: int,
+    entry_rsi: float,
+    exit_rsi: float,
+    cooldown_candles: int,
+    exit_candles: int,
+):
+    if mode == "ema_band":
+        return EMABandStrategy(
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            rsi_period=rsi_period,
+            cooldown_candles=cooldown_candles,
+            exit_candles=exit_candles,
+            exit_rsi=exit_rsi,
+        )
+    return EMARSIOversoldStrategy(
+        ema_period=ema_period,
+        rsi_period=rsi_period,
+        entry_rsi=entry_rsi,
+        exit_rsi=exit_rsi,
+    )
+
+
+def active_strategy():
+    return _strategy_for(
+        STRATEGY_MODE,
+        EMA_FAST,
+        EMA_SLOW,
+        EMA_PERIOD,
+        RSI_PERIOD,
+        ENTRY_RSI or 0.0,
+        EXIT_RSI,
+        COOLDOWN_CANDLES,
+        EXIT_CANDLES,
+    )
 
 
 # ============================================================
@@ -142,6 +193,7 @@ class Lot:
     qty: float
     notional: float
     entry_fee: float
+    exit_armed: bool = False
 
 
 @dataclass
@@ -434,118 +486,7 @@ def candles_to_df(
 def add_indicators(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
-
-    out = df.copy()
-
-    close = (
-        out["close"]
-        .astype(float)
-    )
-
-    # --------------------------------------------------------
-    # EMA(s) - depends on STRATEGY_MODE
-    # --------------------------------------------------------
-
-    if STRATEGY_MODE == "ema_band":
-
-        out["ema_fast"] = close.ewm(
-            span=EMA_FAST, adjust=False, min_periods=EMA_FAST,
-        ).mean()
-
-        out["ema_slow"] = close.ewm(
-            span=EMA_SLOW, adjust=False, min_periods=EMA_SLOW,
-        ).mean()
-
-        # kept for any code path that still reads "ema"
-        out["ema"] = out["ema_fast"]
-
-    else:
-
-        out["ema"] = (
-            close
-            .ewm(
-                span=EMA_PERIOD,
-                adjust=False,
-                min_periods=EMA_PERIOD,
-            )
-            .mean()
-        )
-
-    # --------------------------------------------------------
-    # Wilder RSI (period from active strategy's settings)
-    # --------------------------------------------------------
-
-    delta = close.diff()
-
-    gain = delta.clip(
-        lower=0.0
-    )
-
-    loss = (
-        -delta.clip(
-            upper=0.0
-        )
-    )
-
-    avg_gain = (
-        gain
-        .ewm(
-            alpha=1.0 / RSI_PERIOD,
-            adjust=False,
-            min_periods=RSI_PERIOD,
-        )
-        .mean()
-    )
-
-    avg_loss = (
-        loss
-        .ewm(
-            alpha=1.0 / RSI_PERIOD,
-            adjust=False,
-            min_periods=RSI_PERIOD,
-        )
-        .mean()
-    )
-
-    rs = (
-        avg_gain /
-        avg_loss.replace(
-            0.0,
-            np.nan,
-        )
-    )
-
-    out["rsi"] = (
-        100.0 -
-        (
-            100.0 /
-            (1.0 + rs)
-        )
-    )
-
-    # Strong up-only sequence
-    straight_up = (
-        (avg_loss == 0) &
-        (avg_gain > 0)
-    )
-
-    out.loc[
-        straight_up,
-        "rsi",
-    ] = 100.0
-
-    # Strong down-only sequence
-    straight_down = (
-        (avg_gain == 0) &
-        (avg_loss > 0)
-    )
-
-    out.loc[
-        straight_down,
-        "rsi",
-    ] = 0.0
-
-    return out
+    return active_strategy().enrich(df)
 
 
 # ============================================================
@@ -559,27 +500,7 @@ def entry_signal(
     if not ENABLE_LONG:
         return False
 
-    close = safe_float(row.get("close"), math.nan)
-
-    if STRATEGY_MODE == "ema_band":
-
-        ema_f = safe_float(row.get("ema_fast"), math.nan)
-        ema_s = safe_float(row.get("ema_slow"), math.nan)
-
-        if not all(math.isfinite(v) for v in (close, ema_f, ema_s)):
-            return False
-
-        lo, hi = (ema_f, ema_s) if ema_f <= ema_s else (ema_s, ema_f)
-        return lo <= close <= hi
-
-    # ema_rsi
-    ema = safe_float(row.get("ema"), math.nan)
-    rsi = safe_float(row.get("rsi"), math.nan)
-
-    if not all(math.isfinite(v) for v in (close, ema, rsi)):
-        return False
-
-    return close > ema and rsi < ENTRY_RSI
+    return active_strategy().entry_ready(row)
 
 
 # ============================================================
@@ -591,15 +512,39 @@ def exit_signal(
     candles_elapsed: int = 0,
 ) -> bool:
 
-    rsi = safe_float(row.get("rsi"), math.nan)
+    return active_strategy().exit_ready(row, candles_elapsed)
 
-    if not math.isfinite(rsi):
-        return False
 
-    if STRATEGY_MODE == "ema_band" and candles_elapsed < EXIT_CANDLES:
-        return False
+def target_entry_notional(available_balance: float) -> float:
+    """Match live sizing: size_pct applies to available balance, not leveraged balance."""
+    return max(
+        available_balance * POSITION_SIZE_PCT / 100.0,
+        MIN_TRADE_USDT,
+    )
 
-    return rsi >= EXIT_RSI
+
+def daily_realized_pnl(portfolio: Portfolio, timestamp_ms: int) -> float:
+    day_start_ms = timestamp_ms - timestamp_ms % (24 * 60 * 60 * 1000)
+    return sum(
+        trade.net_pnl
+        for trade in portfolio.closed_trades
+        if trade.exit_ts >= day_start_ms
+    )
+
+
+def elapsed_candles(entry_candle_start: int, current_candle_start: int) -> int:
+    return max(0, (current_candle_start - entry_candle_start) // TIMEFRAME_MS)
+
+
+def strategy_exit_ready(
+    lot: Lot,
+    row: pd.Series,
+    candles_elapsed: int,
+    estimated_net: float,
+) -> bool:
+    if exit_signal(row, candles_elapsed):
+        lot.exit_armed = True
+    return lot.exit_armed and estimated_net > 0
 
 
 # ============================================================
@@ -799,7 +744,7 @@ def close_lot(
     else:
         portfolio.closed_losses += 1
 
-    if reason == "STOP":
+    if reason in {"STOP", "LIQUIDATION_BUFFER_EXIT"}:
         portfolio.stop_count += 1
 
     trade = ClosedTrade(
@@ -837,10 +782,7 @@ def close_lot(
 def parse_args():
 
     parser = argparse.ArgumentParser(
-        description=(
-            "10-day EMA200 + RSI20 "
-            "Bybit 15m backtest"
-        )
+        description="Configuration-driven Bybit linear 15m strategy backtest"
     )
 
     parser.add_argument(
@@ -962,7 +904,7 @@ def main():
         print(
             f"Entry                : "
             f"close between EMA{EMA_FAST} and EMA{EMA_SLOW} "
-            f"(cooldown {COOLDOWN_CANDLES} candles after each attempt)"
+            f"(cooldown {COOLDOWN_CANDLES} candles after an accepted entry)"
         )
         print(
             f"Exit trigger         : "
@@ -1131,12 +1073,14 @@ def main():
             drop=True
         )
 
-        # Remove warmup NaN rows.
+        # Remove warmup NaN rows using the active strategy's indicator fields.
+        indicator_columns = (
+            ["ema_fast", "ema_slow", "rsi"]
+            if STRATEGY_MODE == "ema_band"
+            else ["ema", "rsi"]
+        )
         df = df.dropna(
-            subset=[
-                "ema",
-                "rsi",
-            ]
+            subset=indicator_columns
         ).reset_index(
             drop=True
         )
@@ -1235,8 +1179,8 @@ def main():
         for symbol in frames
     }
 
-    # Last candle index a symbol had an entry attempt, for COOLDOWN_CANDLES.
-    last_entry_idx: Dict[str, int] = {symbol: -10**9 for symbol in frames}
+    # Live cooldown starts only after an entry order is accepted.
+    last_entry_ts: Dict[str, int] = {symbol: -10**18 for symbol in frames}
     account_halted = False
 
     # --------------------------------------------------------
@@ -1330,13 +1274,9 @@ def main():
                 # RSI EXIT
                 # --------------------------------------------
 
-                candles_elapsed = current_idx - lot.entry_idx
+                candles_elapsed = elapsed_candles(lot.entry_ts, ts)
 
-                if (
-                    exit_signal(row, candles_elapsed)
-                    and
-                    estimated_net > 0
-                ):
+                if strategy_exit_ready(lot, row, candles_elapsed, estimated_net):
 
                     close_lot(
                         portfolio,
@@ -1389,17 +1329,25 @@ def main():
                 for lot in lots
             ]
 
-            # Per-symbol cooldown (COOLDOWN_CANDLES since last entry attempt).
-            if (current_idx - last_entry_idx[symbol]) < COOLDOWN_CANDLES:
+            # Per-symbol cooldown (COOLDOWN_CANDLES since the last accepted entry).
+            if (
+                ts - last_entry_ts[symbol]
+                < COOLDOWN_CANDLES * TIMEFRAME_MS
+            ):
                 continue
 
             if not entry_signal(row):
                 continue
 
-            last_entry_idx[symbol] = current_idx
-
             if account_halted:
                 record_rejection(portfolio, "insufficient_equity")
+                continue
+
+            if (
+                MAX_DAILY_LOSS_USDT > 0
+                and daily_realized_pnl(portfolio, ts) <= -abs(MAX_DAILY_LOSS_USDT)
+            ):
+                record_rejection(portfolio, "max_daily_loss")
                 continue
 
             if len(open_lots[symbol]) >= MAX_LONG_ENTRIES:
@@ -1451,13 +1399,8 @@ def main():
                 record_rejection(portfolio, "max_exposure")
                 continue
 
-            target_notional = (
-                available *
-                max(LEVERAGE, 1.0) *
-                POSITION_SIZE_PCT /
-                100.0
-            )
-            target_notional = min(target_notional, exposure_headroom)
+            target_notional = target_entry_notional(available)
+            target_notional = min(target_notional, available, exposure_headroom)
 
             max_order_notional = float(getattr(SETTINGS, "max_order_notional_usdt", 0.0))
             if max_order_notional > 0:
@@ -1544,6 +1487,8 @@ def main():
             open_lots[
                 symbol
             ].append(lot)
+
+            last_entry_ts[symbol] = ts
 
             update_account_diagnostics(portfolio, last_prices)
             assert_account_invariants(portfolio, last_prices)
@@ -1868,8 +1813,13 @@ def main():
 
     print("=" * 120)
 
+    strategy_title = (
+        f"EMA{EMA_FAST}/EMA{EMA_SLOW} + RSI{RSI_PERIOD}"
+        if STRATEGY_MODE == "ema_band"
+        else f"EMA{EMA_PERIOD} + RSI{RSI_PERIOD}"
+    )
     print(
-        "30-DAY EMA200 + RSI20 / "
+        f"{args.days}-DAY {strategy_title} / "
         "15m SHARED-ACCOUNT RESULTS"
     )
 
@@ -1915,6 +1865,12 @@ def main():
     print(
         f"CLOSED WIN RATE      : "
         f"{closed_win_rate:.2f}%"
+    )
+
+    print(
+        "NOTE: Closed-only win rate excludes open positions. "
+        "Strategy exits wait for net profit; assess total P&L, open P&L, "
+        "open exposure, and mark-to-market drawdown."
     )
 
     print(

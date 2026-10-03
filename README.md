@@ -128,8 +128,19 @@ python3 backtest.py
 
 Backtest results are printed to the console; no report files are saved.
 The backtest uses the same merged weighted-average entry, liquidation-buffer
-formula, and per-symbol lot cap as the live engine. A short validation run can
-be limited to one symbol:
+formula, strategy-exit arming, per-symbol lot cap, cooldown, and percentage of
+available balance for sizing as the live engine. Leverage limits modeled
+margin/exposure and estimated liquidation; it is not multiplied into the
+position-size percentage. The backtest uses simulated available margin rather
+than Bybit's live wallet response, and cannot exactly reproduce Bybit quantity
+steps/minimums, fills, funding, or slippage. Treat its results as a historical
+strategy test, not a guarantee of live profitability. A short validation run
+can be limited to one symbol:
+
+The reported closed-trade win rate excludes positions still open. Since the
+strategy holds RSI-triggered exits until they are net-profitable (unless the
+liquidation buffer triggers), review total net P&L, open P&L, open notional,
+and mark-to-market drawdown rather than relying on win rate alone.
 
 ```bash
 python3 backtest.py --days 1 --symbol BTCUSDT
