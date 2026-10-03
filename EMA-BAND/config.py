@@ -4,6 +4,7 @@ from dataclasses import dataclass,field
 from pathlib import Path
 from dotenv import load_dotenv
 ROOT=Path(__file__).resolve().parent; load_dotenv(ROOT/'.env')
+DEFAULT_MAX_TOTAL_OPEN_LOTS=15
 def _bool(n,d):
  r=os.getenv(n); return d if r is None else r.strip().lower() in {'1','true','yes','on'}
 def _float(n,d):
@@ -36,7 +37,7 @@ class Settings:
  maintenance_margin_rate:float=field(default_factory=lambda:_float('MAINTENANCE_MARGIN_RATE',0.005))
  stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',80.0))         # deprecated; retained for compatibility
  max_daily_loss_usdt:float=field(default_factory=lambda:_float('MAX_DAILY_LOSS_USDT',100))
- max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',15))  # 0=disabled; global cap across ALL symbols
+ max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',DEFAULT_MAX_TOTAL_OPEN_LOTS))  # 0=disabled; global cap across ALL symbols
  require_leverage_confirmation:bool=field(default_factory=lambda:_bool('REQUIRE_LEVERAGE_CONFIRMATION',True))  # fail-closed: block a symbol if its leverage could not be set
  max_entry_price_deviation_pct:float=field(default_factory=lambda:_float('MAX_ENTRY_PRICE_DEVIATION_PCT',1.0))  # reject entry if signal price is stale vs live ticker
  stuck_order_timeout_seconds:int=field(default_factory=lambda:_int('STUCK_ORDER_TIMEOUT_SECONDS',120))  # if an order submission throws and Bybit never shows a matching order, give up waiting after this long so it can be retried instead of blocking entries/exits forever
@@ -148,4 +149,3 @@ def check_env_permissions(logger=None):
     raise
 
 SETTINGS=Settings(); SETTINGS.log_dir.mkdir(parents=True,exist_ok=True); SETTINGS.database_path.parent.mkdir(parents=True,exist_ok=True)
-

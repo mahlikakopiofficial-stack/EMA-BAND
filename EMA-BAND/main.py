@@ -125,7 +125,8 @@ def main():
            '/health - show streams and errors\n/positions - show open positions\n/pnl - show account PnL\n'
        '/trades - show recent trades\n/pending - show pending orders\n/alerts - show recent alerts\n'
            '/scan - scan all configured symbols now\n'
-           '/backtest [days] - run the configured strategy backtest (default 30 days)\n'
+           '/backtest [days] - run the configured strategy with Bybit candles\n'
+           'and the configured global lot cap (default 30 days)\n'
        '/digitalocean - show DigitalOcean connection, billing, and droplets\n'
        '/do - alias for /digitalocean\n/test - verify Telegram notifications\n/help - show this message')
   if command=='/status':
@@ -173,5 +174,4 @@ def main():
   if command_thread: command_thread.join(timeout=2)
   store.close()
 if __name__=='__main__': main()
-
 

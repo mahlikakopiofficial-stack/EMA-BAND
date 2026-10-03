@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
-from config import SETTINGS  # noqa: E402
+from config import DEFAULT_MAX_TOTAL_OPEN_LOTS, SETTINGS  # noqa: E402
 from core.liquidation import (
     estimated_liquidation_price,
     liquidation_exit_price,
@@ -100,7 +100,7 @@ MAX_LONG_ENTRIES = int(
 )
 
 MAX_TOTAL_OPEN_LOTS = int(
-    getattr(SETTINGS, "max_total_open_lots", 0)
+    getattr(SETTINGS, "max_total_open_lots", DEFAULT_MAX_TOTAL_OPEN_LOTS)
 )
 
 MAX_ACCOUNT_EXPOSURE_USDT = float(

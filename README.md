@@ -38,7 +38,11 @@ At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_U
 The bot uses Bybit's isolated-margin, One-Way position model with the configured
 leverage. Entries on the same symbol are merged by Bybit into one position.
 `MAX_LONG_ENTRIES` limits the number of open lots per symbol (default: `5`),
-while `MAX_ACCOUNT_EXPOSURE_USDT` remains an independent account-wide cap.
+`MAX_TOTAL_OPEN_LOTS` limits total open lots across all symbols (default: `15`;
+set to `0` to disable), and `MAX_ACCOUNT_EXPOSURE_USDT` remains an independent
+account-wide cap. Telegram runs the same backtest script with the bot's
+configuration; each report prints the effective global lot cap. To compare
+against a terminal run, run it from the same installation and configuration.
 
 The default emergency exit is liquidation-aware: when a merged position reaches
 the configured `LIQUIDATION_BUFFER_PCT` of the distance from its weighted
