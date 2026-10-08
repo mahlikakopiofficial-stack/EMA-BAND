@@ -1,0 +1,2 @@
+# Root-level Codespaces dependency entrypoint.
+-r EMA-BAND/requirements.txt

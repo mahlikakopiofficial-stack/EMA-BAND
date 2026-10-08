@@ -20,7 +20,7 @@ If credentials have ever been exposed, revoke and regenerate both the Bybit API 
 - Bybit account for testnet or live operation
 - Optional Telegram bot for notifications
 
-Install dependencies:
+Install dependencies from the repository root in Codespaces:
 
 ```bash
 python3 -m pip install -r requirements.txt
@@ -29,23 +29,23 @@ python3 -m pip install -r requirements.txt
 ## Configuration
 
 ```bash
-cp .env.example .env
-chmod 600 .env
+cp EMA-BAND/.env.example EMA-BAND/.env
+chmod 600 EMA-BAND/.env
 ```
 
-At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_LONG_ENTRIES`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
+Set `MIN_TRADE_USDT=5` in `EMA-BAND/.env` for both the live engine and backtest. At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_LONG_ENTRIES`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
 
 The bot uses Bybit's isolated-margin, One-Way position model with the configured
 leverage. Entries on the same symbol are merged by Bybit into one position.
 `MAX_LONG_ENTRIES` limits the number of open lots per symbol (default: `5`),
-`MAX_TOTAL_OPEN_LOTS` limits total open lots across all symbols (default: `15`;
+`MAX_TOTAL_OPEN_LOTS` limits total open lots across all symbols (default: `30`;
 set to `0` to disable), and `MAX_ACCOUNT_EXPOSURE_USDT` remains an independent
 account-wide cap. Telegram runs the same backtest script with the bot's
 configuration; each report prints the effective global lot cap. To compare
 against a terminal run, run it from the same installation and configuration.
 
 The default emergency exit is liquidation-aware: when a merged position reaches
-the configured `LIQUIDATION_BUFFER_PCT` of the distance from its weighted
+the configured `LIQUIDATION_BUFFER_PCT` (default: `20%`) of the distance from its weighted
 average entry to Bybit's live liquidation price, the bot closes the entire
 merged symbol position in one reduce-only market order. In backtests, the
 liquidation price is estimated using `LEVERAGE` and
@@ -56,9 +56,10 @@ but is deprecated and is not used to decide exits.
 
 ## Preflight
 
-Run this before starting the bot:
+Run preflight from the project directory:
 
 ```bash
+cd EMA-BAND
 python3 preflight.py
 ```
 
@@ -70,7 +71,10 @@ python3 preflight.py --set-leverage
 
 ## Run
 
+Run the bot from the project directory:
+
 ```bash
+cd EMA-BAND
 python3 main.py
 ```
 
@@ -126,8 +130,17 @@ ssh -N -L 8080:127.0.0.1:8080 user@your-vps
 
 ## Backtesting
 
+From the repository root in Codespaces:
+
 ```bash
+python3 -m pip install -r requirements.txt
 python3 backtest.py
+```
+
+Or run a single symbol for validation:
+
+```bash
+python3 backtest.py --days 1 --symbol BTCUSDT
 ```
 
 Backtest results are printed to the console; no report files are saved.
@@ -156,6 +169,8 @@ python3 backtest.py --days 1 --symbol BTCUSDT
 - `ema_rsi`: enters long above the configured EMA when RSI is below the entry threshold; exits when RSI reaches the exit threshold and the trade is profitable.
 
 Set `STRATEGY_MODE` in `.env` to select a strategy.
+
+For live strategy exits, `EXIT_ON_CANDLE_CLOSE=true` (the default) means EMA-BAND and EMA+RSI strategy exits are evaluated only from confirmed 15-minute candles. The heartbeat may still display forming-candle EMA/RSI values, but it does not execute a strategy exit from an unconfirmed candle. The liquidation-buffer exit remains emergency intrabar protection.
 
 ## Project Layout
 
