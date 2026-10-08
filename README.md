@@ -38,14 +38,14 @@ Set `MIN_TRADE_USDT=5` in `EMA-BAND/.env` for both the live engine and backtest.
 The bot uses Bybit's isolated-margin, One-Way position model with the configured
 leverage. Entries on the same symbol are merged by Bybit into one position.
 `MAX_LONG_ENTRIES` limits the number of open lots per symbol (default: `5`),
-`MAX_TOTAL_OPEN_LOTS` limits total open lots across all symbols (default: `15`;
+`MAX_TOTAL_OPEN_LOTS` limits total open lots across all symbols (default: `30`;
 set to `0` to disable), and `MAX_ACCOUNT_EXPOSURE_USDT` remains an independent
 account-wide cap. Telegram runs the same backtest script with the bot's
 configuration; each report prints the effective global lot cap. To compare
 against a terminal run, run it from the same installation and configuration.
 
 The default emergency exit is liquidation-aware: when a merged position reaches
-the configured `LIQUIDATION_BUFFER_PCT` of the distance from its weighted
+the configured `LIQUIDATION_BUFFER_PCT` (default: `20%`) of the distance from its weighted
 average entry to Bybit's live liquidation price, the bot closes the entire
 merged symbol position in one reduce-only market order. In backtests, the
 liquidation price is estimated using `LEVERAGE` and
