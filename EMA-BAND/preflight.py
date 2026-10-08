@@ -88,6 +88,7 @@ def main():
     print(f"  MAINTENANCE_MARGIN_RATE  : {S.maintenance_margin_rate:g}")
     print(f"  STOP_LOSS_PCT            : {S.stop_loss_pct:g}%  (deprecated; not used for exits)")
     print(f"  POSITION_SIZE_PCT        : {S.position_size_pct:g}% of available balance per entry")
+    print(f"  EXIT_ON_CANDLE_CLOSE     : {'true' if getattr(S, 'exit_on_candle_close', True) else 'false'} (strategy exits on confirmed 15m close only when true)")
     print(f"  MIN_TRADE_USDT           : {S.min_trade_usdt:g}")
     print(f"  MAX_LONG_ENTRIES         : {S.max_long_entries} per symbol")
     print(f"  MAX_TOTAL_OPEN_LOTS      : {S.max_total_open_lots or 'DISABLED'} across all symbols")
