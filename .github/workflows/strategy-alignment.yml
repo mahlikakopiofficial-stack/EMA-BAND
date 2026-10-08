@@ -35,4 +35,6 @@ jobs:
           ENABLE_LIVE_TRADING: "false"
           ENABLE_SHORT: "false"
           EXIT_ON_CANDLE_CLOSE: "true"
+        env:
+          PYTHONPATH: .
         run: pytest -q tests/test/test_backtest_live_alignment.py
