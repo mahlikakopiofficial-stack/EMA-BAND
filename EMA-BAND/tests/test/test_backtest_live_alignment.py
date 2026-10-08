@@ -1,7 +1,9 @@
 import pandas as pd
+from types import SimpleNamespace
 
 import backtest
-from strategies.ema_strategies import EMABandStrategy
+from core.engine import _build_strategy, _strategy_exit_allowed
+from strategies.ema_strategies import EMABandStrategy, EMARSIOversoldStrategy
 
 
 def test_backtest_sizing_uses_available_balance_without_multiplying_leverage(monkeypatch):
@@ -88,3 +90,83 @@ def test_elapsed_candles_uses_candle_timestamps_across_gaps():
     assert backtest.elapsed_candles(0, 5 * timeframe_ms) == 5
     assert backtest.elapsed_candles(0, 7 * timeframe_ms + 1) == 7
     assert backtest.elapsed_candles(timeframe_ms, 0) == 0
+
+
+def test_strategy_exits_require_confirmed_candle_when_enabled():
+    settings = SimpleNamespace(exit_on_candle_close=True)
+    assert _strategy_exit_allowed(settings, pd.Series({"confirm": True}))
+    assert not _strategy_exit_allowed(settings, pd.Series({"confirm": False}))
+    assert not _strategy_exit_allowed(settings, pd.Series({}))
+
+
+def test_strategy_exits_can_be_intrabar_when_disabled():
+    settings = SimpleNamespace(exit_on_candle_close=False)
+    assert _strategy_exit_allowed(settings, pd.Series({"confirm": False}))
+    assert _strategy_exit_allowed(settings, pd.Series({}))
+
+
+def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(monkeypatch):
+    candles = pd.DataFrame({
+        "start": [i * backtest.TIMEFRAME_MS for i in range(12)],
+        "close": [100.0, 100.4, 100.8, 100.1, 99.8, 100.7, 101.5, 100.9, 101.7, 102.4, 101.8, 102.8],
+    })
+
+    cases = [
+        (
+            "ema_band",
+            SimpleNamespace(
+                strategy_mode="ema_band",
+                ema_band_fast=3,
+                ema_band_slow=4,
+                ema_band_rsi_period=2,
+                ema_band_cooldown_candles=0,
+                ema_band_exit_candles=2,
+                ema_band_exit_rsi=75.0,
+            ),
+        ),
+        (
+            "ema_rsi",
+            SimpleNamespace(
+                strategy_mode="ema_rsi",
+                ema_rsi_ema_period=3,
+                ema_rsi_period=2,
+                ema_rsi_entry_rsi=45.0,
+                ema_rsi_exit_rsi=80.0,
+            ),
+        ),
+    ]
+
+    for mode, live_settings in cases:
+        monkeypatch.setattr(backtest, "STRATEGY_MODE", mode)
+        backtest._strategy_for.cache_clear()
+
+        live_strategy = _build_strategy(live_settings)
+        backtest_strategy = backtest.active_strategy()
+
+        live_enriched = live_strategy.enrich(candles.copy())
+        backtest_enriched = backtest_strategy.enrich(candles.copy())
+
+        indicator_cols = (
+            ["ema_fast", "ema_slow", "rsi"]
+            if mode == "ema_band"
+            else ["ema", "rsi"]
+        )
+        pd.testing.assert_frame_equal(
+            live_enriched[indicator_cols],
+            backtest_enriched[indicator_cols],
+        )
+
+        live_events = []
+        backtest_events = []
+        for i, row in live_enriched.iterrows():
+            live_events.append((
+                bool(live_strategy.entry_ready(row)),
+                bool(live_strategy.exit_ready(row, i)),
+            ))
+        for i, row in backtest_enriched.iterrows():
+            backtest_events.append((
+                bool(backtest_strategy.entry_ready(row)),
+                bool(backtest_strategy.exit_ready(row, i)),
+            ))
+
+        assert live_events == backtest_events
