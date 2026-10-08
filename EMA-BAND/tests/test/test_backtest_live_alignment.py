@@ -8,7 +8,7 @@ from strategies.ema_strategies import EMABandStrategy, EMARSIOversoldStrategy
 
 def test_backtest_sizing_uses_available_balance_without_multiplying_leverage(monkeypatch):
     monkeypatch.setattr(backtest, "POSITION_SIZE_PCT", 10.0)
-    monkeypatch.setattr(backtest, "MIN_TRADE_USDT", 15.0)
+    monkeypatch.setattr(backtest, "MIN_TRADE_USDT", 5.0)
     monkeypatch.setattr(backtest, "LEVERAGE", 3.0)
 
     assert backtest.target_entry_notional(1000.0) == 100.0
