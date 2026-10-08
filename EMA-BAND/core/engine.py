@@ -40,6 +40,11 @@ def _cooldown_candles_for(settings):
  if settings.strategy_mode=='ema_rsi': return settings.ema_rsi_cooldown_candles
  return 0
 
+def _strategy_exit_allowed(settings,row):
+ if not getattr(settings,'exit_on_candle_close',True): return True
+ try: return bool(row is not None and bool(row.get('confirm',False)))
+ except Exception: return False
+
 class Engine:
  def __init__(self,settings,store,telegram,adapter=None):
   self.settings=settings; self.store=store; self.telegram=telegram; self.bybit=adapter or BybitAdapter(settings); self.strategy=_build_strategy(settings); self.risk=RiskManager(settings,store)
@@ -133,14 +138,15 @@ class Engine:
     self.telegram.send(f'⚠️ LIQUIDATION BUFFER EXIT\n{s} LONG\nPrice: {price:.8f}\nTrigger: {exit_price:.8f}\nClosing merged position.')
     self.request_close_merged(s,'LONG',merged.qty,price,'liquidation_buffer_exit')
     return
+  strategy_exit_allowed=_strategy_exit_allowed(self.settings,row)
   for lot in sorted([x for x in self.lots.values() if x.symbol==s and x.status=='OPEN'],key=lambda x:x.entry_time_ms):
    if any(p.action=='EXIT' and p.symbol==s and p.side==lot.side and p.status in ACTIVE for p in self.pending.values()): continue
    candles_elapsed=10**9
    if current_candle_start is not None and lot.entry_candle_start:
     candles_elapsed=max(0,(current_candle_start-lot.entry_candle_start)//candle_ms)
-   if not lot.exit_armed and row is not None and self.strategy.exit_ready(row,candles_elapsed):
+   if strategy_exit_allowed and not lot.exit_armed and row is not None and self.strategy.exit_ready(row,candles_elapsed):
     lot.exit_armed=True; self.store.save_lot(lot); self.store.event('EXIT_ARMED',{'lot_id':lot.lot_id,'price':price,'candles_elapsed':int(candles_elapsed)},s,lot.side)
-   if lot.exit_armed and self._estimated_net(lot,price)>0:
+   if strategy_exit_allowed and lot.exit_armed and self._estimated_net(lot,price)>0:
     self.request_close_lot(lot,price,'strategy_target_then_profitable'); continue
    if lot.exit_armed and self._estimated_net(lot,price)<=0: self.store.event('EXIT_HELD_UNPROFITABLE',{'lot_id':lot.lot_id,'price':price,'net_pnl':self._estimated_net(lot,price)},s,lot.side)
  def _process_closed_candle(self,s):
