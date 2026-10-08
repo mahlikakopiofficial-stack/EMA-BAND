@@ -106,18 +106,19 @@ def test_strategy_exits_can_be_intrabar_when_disabled():
 
 
 def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(monkeypatch):
-    close = [100.0] * 205
-    for _ in range(20):
-        close.append(close[-1] + 0.8)
-    for _ in range(15):
-        close.append(close[-1] - 1.8)
-    for _ in range(35):
-        close.append(close[-1] + 3.0)
-
-    candles = pd.DataFrame({
-        "start": [i * backtest.TIMEFRAME_MS for i in range(len(close))],
-        "close": close,
-    })
+    samples = {
+        "ema_band": [
+            *[100.0 - 0.01 * i for i in range(210)],
+            *[100.0 - 0.01 * 209 + 0.04 * i for i in range(25)],
+            *[100.0 - 0.01 * 209 + 0.04 * 24 + 3.0 * i for i in range(20)],
+        ],
+        "ema_rsi": [
+            *([100.0] * 205),
+            *[100.0 + 0.8 * (i + 1) for i in range(20)],
+            *[116.0 - 1.8 * (i + 1) for i in range(15)],
+            *[89.0 + 3.0 * (i + 1) for i in range(35)],
+        ],
+    }
 
     cases = [
         (
@@ -145,6 +146,12 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
     ]
 
     for mode, live_settings in cases:
+        close = samples[mode]
+        candles = pd.DataFrame({
+            "start": [i * backtest.TIMEFRAME_MS for i in range(len(close))],
+            "close": close,
+        })
+
         monkeypatch.setattr(backtest, "STRATEGY_MODE", mode)
         monkeypatch.setattr(backtest, "EMA_FAST", 200)
         monkeypatch.setattr(backtest, "EMA_SLOW", 210 if mode == "ema_band" else 200)
