@@ -23,7 +23,6 @@ If credentials have ever been exposed, revoke and regenerate both the Bybit API 
 Install dependencies from the repository root in Codespaces:
 
 ```bash
-cd EMA-BAND
 python3 -m pip install -r requirements.txt
 ```
 
@@ -57,7 +56,7 @@ but is deprecated and is not used to decide exits.
 
 ## Preflight
 
-Run this from the repository root in Codespaces:
+Run preflight from the project directory:
 
 ```bash
 cd EMA-BAND
@@ -72,7 +71,7 @@ python3 preflight.py --set-leverage
 
 ## Run
 
-Run this from the repository root in Codespaces:
+Run the bot from the project directory:
 
 ```bash
 cd EMA-BAND
@@ -134,7 +133,6 @@ ssh -N -L 8080:127.0.0.1:8080 user@your-vps
 From the repository root in Codespaces:
 
 ```bash
-cd EMA-BAND
 python3 -m pip install -r requirements.txt
 python3 backtest.py
 ```
@@ -142,7 +140,6 @@ python3 backtest.py
 Or run a single symbol for validation:
 
 ```bash
-cd EMA-BAND
 python3 backtest.py --days 1 --symbol BTCUSDT
 ```
 
