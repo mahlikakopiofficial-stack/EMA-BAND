@@ -4,7 +4,7 @@ from dataclasses import dataclass,field
 from pathlib import Path
 from dotenv import load_dotenv
 ROOT=Path(__file__).resolve().parent; load_dotenv(ROOT/'.env')
-DEFAULT_MAX_TOTAL_OPEN_LOTS=15
+DEFAULT_MAX_TOTAL_OPEN_LOTS=30
 def _bool(n,d):
  r=os.getenv(n); return d if r is None else r.strip().lower() in {'1','true','yes','on'}
 def _float(n,d):
@@ -33,7 +33,7 @@ class Settings:
 
  # --- Leverage & risk ---
  leverage:int=field(default_factory=lambda:_int('LEVERAGE',3))                          # "Leverage 3x"
- liquidation_buffer_pct:float=field(default_factory=lambda:_float('LIQUIDATION_BUFFER_PCT',30.0))
+ liquidation_buffer_pct:float=field(default_factory=lambda:_float('LIQUIDATION_BUFFER_PCT',20.0))
  maintenance_margin_rate:float=field(default_factory=lambda:_float('MAINTENANCE_MARGIN_RATE',0.005))
  stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',80.0))         # deprecated; retained for compatibility
  max_daily_loss_usdt:float=field(default_factory=lambda:_float('MAX_DAILY_LOSS_USDT',100))
