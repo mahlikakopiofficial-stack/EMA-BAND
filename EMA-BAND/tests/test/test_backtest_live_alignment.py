@@ -106,9 +106,17 @@ def test_strategy_exits_can_be_intrabar_when_disabled():
 
 
 def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(monkeypatch):
+    close = [100.0] * 205
+    for _ in range(20):
+        close.append(close[-1] + 0.8)
+    for _ in range(15):
+        close.append(close[-1] - 1.8)
+    for _ in range(35):
+        close.append(close[-1] + 3.0)
+
     candles = pd.DataFrame({
-        "start": [i * backtest.TIMEFRAME_MS for i in range(12)],
-        "close": [100.0, 100.4, 100.8, 100.1, 99.8, 100.7, 101.5, 100.9, 101.7, 102.4, 101.8, 102.8],
+        "start": [i * backtest.TIMEFRAME_MS for i in range(len(close))],
+        "close": close,
     })
 
     cases = [
@@ -116,11 +124,11 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
             "ema_band",
             SimpleNamespace(
                 strategy_mode="ema_band",
-                ema_band_fast=3,
-                ema_band_slow=4,
-                ema_band_rsi_period=2,
+                ema_band_fast=200,
+                ema_band_slow=210,
+                ema_band_rsi_period=20,
                 ema_band_cooldown_candles=0,
-                ema_band_exit_candles=2,
+                ema_band_exit_candles=5,
                 ema_band_exit_rsi=75.0,
             ),
         ),
@@ -128,8 +136,8 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
             "ema_rsi",
             SimpleNamespace(
                 strategy_mode="ema_rsi",
-                ema_rsi_ema_period=3,
-                ema_rsi_period=2,
+                ema_rsi_ema_period=200,
+                ema_rsi_period=20,
                 ema_rsi_entry_rsi=45.0,
                 ema_rsi_exit_rsi=80.0,
             ),
@@ -138,6 +146,15 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
 
     for mode, live_settings in cases:
         monkeypatch.setattr(backtest, "STRATEGY_MODE", mode)
+        monkeypatch.setattr(backtest, "EMA_FAST", 200)
+        monkeypatch.setattr(backtest, "EMA_SLOW", 210 if mode == "ema_band" else 200)
+        monkeypatch.setattr(backtest, "EMA_PERIOD", 200)
+        monkeypatch.setattr(backtest, "RSI_PERIOD", 20)
+        monkeypatch.setattr(backtest, "ENTRY_RSI", None if mode == "ema_band" else 45.0)
+        monkeypatch.setattr(backtest, "EXIT_RSI", 75.0 if mode == "ema_band" else 80.0)
+        monkeypatch.setattr(backtest, "COOLDOWN_CANDLES", 0)
+        monkeypatch.setattr(backtest, "EXIT_CANDLES", 5 if mode == "ema_band" else 0)
+
         backtest._strategy_for.cache_clear()
 
         live_strategy = _build_strategy(live_settings)
@@ -146,11 +163,7 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
         live_enriched = live_strategy.enrich(candles.copy())
         backtest_enriched = backtest_strategy.enrich(candles.copy())
 
-        indicator_cols = (
-            ["ema_fast", "ema_slow", "rsi"]
-            if mode == "ema_band"
-            else ["ema", "rsi"]
-        )
+        indicator_cols = ["ema_fast", "ema_slow", "rsi"] if mode == "ema_band" else ["ema", "rsi"]
         pd.testing.assert_frame_equal(
             live_enriched[indicator_cols],
             backtest_enriched[indicator_cols],
@@ -159,14 +172,10 @@ def test_same_candle_sample_live_builder_and_backtest_match_for_both_strategies(
         live_events = []
         backtest_events = []
         for i, row in live_enriched.iterrows():
-            live_events.append((
-                bool(live_strategy.entry_ready(row)),
-                bool(live_strategy.exit_ready(row, i)),
-            ))
+            live_events.append((bool(live_strategy.entry_ready(row)), bool(live_strategy.exit_ready(row, i))))
         for i, row in backtest_enriched.iterrows():
-            backtest_events.append((
-                bool(backtest_strategy.entry_ready(row)),
-                bool(backtest_strategy.exit_ready(row, i)),
-            ))
+            backtest_events.append((bool(backtest_strategy.entry_ready(row)), bool(backtest_strategy.exit_ready(row, i))))
 
         assert live_events == backtest_events
+        assert any(entry for entry, _ in live_events), f"{mode}: sample did not produce an entry"
+        assert any(exit_ready for _, exit_ready in live_events), f"{mode}: sample did not produce an exit-ready candle"
