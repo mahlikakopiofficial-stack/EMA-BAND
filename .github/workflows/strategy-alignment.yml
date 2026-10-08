@@ -25,9 +25,17 @@ jobs:
           python -m pip install -r EMA-BAND/requirements.txt
           python -m pip install pytest
 
+      - name: Root launcher compile check
+        run: python -m py_compile backtest.py
+
       - name: Compile check
         working-directory: EMA-BAND
         run: python -m compileall -q main.py preflight.py backtest.py core strategies tests
+
+      - name: Root backtest import smoke test
+        env:
+          PYTHONPATH: .
+        run: python -c "import runpy, pathlib; p=pathlib.Path('backtest.py'); print('ROOT_BACKTEST_LAUNCHER_OK' if p.is_file() else 'ROOT_BACKTEST_LAUNCHER_MISSING')"
 
       - name: Strategy alignment tests
         working-directory: EMA-BAND
