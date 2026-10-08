@@ -20,9 +20,10 @@ If credentials have ever been exposed, revoke and regenerate both the Bybit API 
 - Bybit account for testnet or live operation
 - Optional Telegram bot for notifications
 
-Install dependencies:
+Install dependencies from the repository root in Codespaces:
 
 ```bash
+cd EMA-BAND
 python3 -m pip install -r requirements.txt
 ```
 
@@ -56,9 +57,10 @@ but is deprecated and is not used to decide exits.
 
 ## Preflight
 
-Run this before starting the bot:
+Run this from the repository root in Codespaces:
 
 ```bash
+cd EMA-BAND
 python3 preflight.py
 ```
 
@@ -70,7 +72,10 @@ python3 preflight.py --set-leverage
 
 ## Run
 
+Run this from the repository root in Codespaces:
+
 ```bash
+cd EMA-BAND
 python3 main.py
 ```
 
@@ -126,8 +131,19 @@ ssh -N -L 8080:127.0.0.1:8080 user@your-vps
 
 ## Backtesting
 
+From the repository root in Codespaces:
+
 ```bash
+cd EMA-BAND
+python3 -m pip install -r requirements.txt
 python3 backtest.py
+```
+
+Or run a single symbol for validation:
+
+```bash
+cd EMA-BAND
+python3 backtest.py --days 1 --symbol BTCUSDT
 ```
 
 Backtest results are printed to the console; no report files are saved.
