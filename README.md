@@ -29,11 +29,11 @@ python3 -m pip install -r requirements.txt
 ## Configuration
 
 ```bash
-cp .env.example .env
-chmod 600 .env
+cp EMA-BAND/.env.example EMA-BAND/.env
+chmod 600 EMA-BAND/.env
 ```
 
-At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_LONG_ENTRIES`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
+Set `MIN_TRADE_USDT=5` in `EMA-BAND/.env` for both the live engine and backtest. At minimum, review `BYBIT_TESTNET`, `ENABLE_LIVE_TRADING`, `MAX_ORDER_NOTIONAL_USDT`, `MAX_LONG_ENTRIES`, `MAX_TOTAL_OPEN_LOTS`, and `MAX_DAILY_LOSS_USDT`. Keep `DASHBOARD_HOST=127.0.0.1`.
 
 The bot uses Bybit's isolated-margin, One-Way position model with the configured
 leverage. Entries on the same symbol are merged by Bybit into one position.
