@@ -69,6 +69,7 @@ class Settings:
  reconciliation_seconds:int=field(default_factory=lambda:_int('RECONCILIATION_SECONDS',5))
  pnl_review_minutes:int=field(default_factory=lambda:_int('PNL_REVIEW_MINUTES',30))
  max_slippage_bps:float=field(default_factory=lambda:_float('MAX_SLIPPAGE_BPS',50))
+ exit_on_candle_close:bool=field(default_factory=lambda:_bool('EXIT_ON_CANDLE_CLOSE',True))  # strategy exits only on confirmed 15m candle closes
 
  # --- Telegram ---
  telegram_bot_token:str=field(default_factory=lambda:os.getenv('TELEGRAM_BOT_TOKEN','').strip())
