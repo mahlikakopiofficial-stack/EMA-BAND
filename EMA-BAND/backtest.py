@@ -9,7 +9,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as exc:
+    raise SystemExit(
+        "Missing NumPy dependency. Install it with: "
+        "python -m pip install 'numpy>=1.26,<3'"
+    ) from exc
+
 import pandas as pd
 import requests
 from dotenv import load_dotenv
