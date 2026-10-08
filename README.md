@@ -157,6 +157,8 @@ python3 backtest.py --days 1 --symbol BTCUSDT
 
 Set `STRATEGY_MODE` in `.env` to select a strategy.
 
+For live strategy exits, `EXIT_ON_CANDLE_CLOSE=true` (the default) means EMA-BAND and EMA+RSI strategy exits are evaluated only from confirmed 15-minute candles. The heartbeat may still display forming-candle EMA/RSI values, but it does not execute a strategy exit from an unconfirmed candle. The liquidation-buffer exit remains emergency intrabar protection.
+
 ## Project Layout
 
 ```text
