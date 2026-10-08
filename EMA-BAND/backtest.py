@@ -99,7 +99,7 @@ POSITION_SIZE_PCT = float(
 )
 
 MIN_TRADE_USDT = float(
-    getattr(SETTINGS, "min_trade_usdt", 15.0)
+    getattr(SETTINGS, "min_trade_usdt", 5.0)
 )
 
 MAX_LONG_ENTRIES = int(
