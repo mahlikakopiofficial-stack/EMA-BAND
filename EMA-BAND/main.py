@@ -67,9 +67,7 @@ def main():
    return '\n'.join(rows)
   def pnl():
    try:
-    equity,available=engine.bybit.get_balance()
-    exchange_positions=engine.bybit.get_positions()
-    unrealized=sum(float(row.get('unrealisedPnl') or 0) for row in exchange_positions)
+    equity,available,unrealized=engine.account_snapshot()
    except Exception as exc:
     return f'PnL unavailable: {exc}'
    today=datetime.now(timezone.utc).date()
