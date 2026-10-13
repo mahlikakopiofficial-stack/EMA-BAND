@@ -167,7 +167,7 @@ def make_settings(tmp_path, **overrides):
         require_env_file_permissions_check=False,
         dashboard_host="127.0.0.1",
         dashboard_port=8080,
-        database_path=Path(tmp_path) / "data" / "trading.db",
+        database_path=Path(tmp_path) / "data" / "paper-trading.db",
         log_dir=Path(tmp_path) / "logs",
         bybit_api_key="",
         bybit_api_secret="",
