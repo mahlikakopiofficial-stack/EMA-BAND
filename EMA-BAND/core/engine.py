@@ -156,7 +156,38 @@ class Engine:
   if not(close>0): return
   self._check_exits(s,close,row)
   sig=self.strategy.signal(s,df)
-  if not sig: return
+  if not sig:
+   # Surface why the strategy did not emit an entry on this confirmed candle.
+   # This distinguishes a legitimate no-signal candle from indicator warmup or
+   # an unexpected mismatch between displayed EMA values and the strategy rule.
+   row=df.iloc[-1]
+   try:
+    close=float(row.get('close',float('nan')))
+    if self.settings.strategy_mode=='ema_band':
+     ema_fast=float(row.get('ema_fast',float('nan')))
+     ema_slow=float(row.get('ema_slow',float('nan')))
+     if not all(__import__('math').isfinite(v) for v in (close,ema_fast,ema_slow)):
+      reason='indicator_warmup_or_invalid'
+     elif min(ema_fast,ema_slow)<=close<=max(ema_fast,ema_slow):
+      reason='signal_logic_mismatch'
+     else:
+      reason='close_outside_ema_band'
+     log.info('STRATEGY_NO_SIGNAL %s mode=ema_band reason=%s bars=%d close=%.8f EMA%d=%.8f EMA%d=%.8f',
+      s,reason,len(df),close,self.settings.ema_band_fast,ema_fast,self.settings.ema_band_slow,ema_slow)
+    elif self.settings.strategy_mode=='ema_rsi':
+     ema=float(row.get('ema',float('nan')))
+     rsi=float(row.get('rsi',float('nan')))
+     if not all(__import__('math').isfinite(v) for v in (close,ema,rsi)):
+      reason='indicator_warmup_or_invalid'
+     elif close>ema and rsi<self.settings.ema_rsi_entry_rsi:
+      reason='signal_logic_mismatch'
+     else:
+      reason='entry_conditions_not_met'
+     log.info('STRATEGY_NO_SIGNAL %s mode=ema_rsi reason=%s bars=%d close=%.8f EMA%d=%.8f RSI%d=%.4f entry_rsi=%.4f',
+      s,reason,len(df),close,self.settings.ema_rsi_ema_period,ema,self.settings.ema_rsi_period,rsi,self.settings.ema_rsi_entry_rsi)
+   except (TypeError,ValueError,KeyError) as exc:
+    log.debug('STRATEGY_NO_SIGNAL %s: diagnostics unavailable: %s',s,exc)
+   return
   if self.last_scanner_entry_candle.get(s)==int(sig.candle_start): return
   if int(sig.candle_start)<self.next_entry_allowed_candle.get(s,0):
    return  # still inside post-entry cooldown window for this symbol
