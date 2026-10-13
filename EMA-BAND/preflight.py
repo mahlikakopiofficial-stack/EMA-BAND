@@ -73,6 +73,9 @@ def main():
             else "LIVE TESTNET (fake money)" if S.enable_live_trading
             else "PAPER (no orders sent)")
     print(f"  MODE                     : {mode}")
+    if not S.enable_live_trading:
+        print(f"  PAPER_STARTING_CAPITAL   : {S.paper_starting_capital_usdt:.2f} USDT (virtual)")
+    print(f"  DATABASE_PATH            : {S.database_path}")
     print(f"  STRATEGY_MODE            : {S.strategy_mode}")
     if S.strategy_mode == "ema_band":
         print(f"    entry                  : 15m close between EMA{S.ema_band_fast} and EMA{S.ema_band_slow}")
