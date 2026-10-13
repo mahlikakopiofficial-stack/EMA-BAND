@@ -124,6 +124,7 @@ def make_settings(tmp_path, **overrides):
     base = dict(
         bybit_testnet=True,
         enable_live_trading=False,
+        paper_starting_capital_usdt=1000.0,
         category="linear",
         timeframe="15",
         symbols=("BTCUSDT",),
