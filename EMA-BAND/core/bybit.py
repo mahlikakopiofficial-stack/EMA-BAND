@@ -15,6 +15,10 @@ class BybitAdapter:
             api_key=settings.bybit_api_key,
             api_secret=settings.bybit_api_secret
         )
+        self.market_data_testnet = getattr(settings, 'market_data_testnet', settings.bybit_testnet)
+        self.market_http = (self.http if self.market_data_testnet == settings.bybit_testnet
+                            else HTTP(testnet=self.market_data_testnet))
+        log.info('Public market-data REST source: %s', 'TESTNET' if self.market_data_testnet else 'MAINNET')
         self.instruments = {}
         self.last_http_refresh = time.time()
         self.http_refresh_interval = 3600  # Refresh HTTP session every hour
@@ -31,6 +35,9 @@ class BybitAdapter:
                     api_key=self.settings.bybit_api_key,
                     api_secret=self.settings.bybit_api_secret
                 )
+                self.market_data_testnet = getattr(self.settings, 'market_data_testnet', self.settings.bybit_testnet)
+                self.market_http = (self.http if self.market_data_testnet == self.settings.bybit_testnet
+                                    else HTTP(testnet=self.market_data_testnet))
                 self.last_http_refresh = now
                 log.info("✅ HTTP client refreshed")
             except Exception as e:
@@ -105,7 +112,7 @@ class BybitAdapter:
             try:
                 def fetch():
                     return self._ok(
-                        self.http.get_instruments_info(category='linear', symbol=s)
+                        self.market_http.get_instruments_info(category='linear', symbol=s)
                     ).get('result', {}).get('list', [])
                 
                 rows = self._with_retry(fetch, max_retries=3)
@@ -224,7 +231,7 @@ class BybitAdapter:
         
         def fetch():
             rows = self._ok(
-                self.http.get_tickers(category='linear')
+                self.market_http.get_tickers(category='linear')
             ).get('result', {}).get('list', [])
             
             wanted = set(self.settings.symbols)
@@ -251,7 +258,7 @@ class BybitAdapter:
         
         def fetch():
             rows = self._ok(
-                self.http.get_kline(
+                self.market_http.get_kline(
                     category='linear',
                     symbol=symbol,
                     interval=self.settings.timeframe,

@@ -34,6 +34,7 @@ class Settings:
 
  # --- Paper-mode account; never sourced from the real exchange wallet ---
  paper_starting_capital_usdt:float=field(default_factory=lambda:_float('PAPER_STARTING_CAPITAL_USDT',1000.0))
+ paper_market_data_testnet:bool=field(default_factory=lambda:_bool('PAPER_MARKET_DATA_TESTNET',False))
 
  # --- Position sizing / caps ---
  position_size_pct:float=field(default_factory=lambda:_float('POSITION_SIZE_PCT',10.0))
@@ -97,6 +98,11 @@ class Settings:
  require_env_file_permissions_check:bool=field(default_factory=lambda:_bool('CHECK_ENV_PERMISSIONS',True))
 
  dashboard_host:str=field(default_factory=lambda:os.getenv('DASHBOARD_HOST','127.0.0.1')); dashboard_port:int=field(default_factory=lambda:_int('DASHBOARD_PORT',8080)); database_path:Path=field(default_factory=_database_path); log_dir:Path=ROOT/'logs'
+
+ @property
+ def market_data_testnet(self):
+  # Live/testnet data follows the trading endpoint. Paper mode defaults to the public mainnet feed.
+  return self.bybit_testnet if self.enable_live_trading else self.paper_market_data_testnet
 
  def validate(self):
   e=[]

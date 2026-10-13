@@ -32,8 +32,9 @@ class MarketStream:
             from pybit.unified_trading import WebSocket
             
             log.info("Starting MarketStream...")
+            market_testnet = getattr(self.settings, 'market_data_testnet', self.settings.bybit_testnet)
             self.ws = WebSocket(
-                testnet=self.settings.bybit_testnet,
+                testnet=market_testnet,
                 channel_type='linear'
             )
             
@@ -54,7 +55,7 @@ class MarketStream:
             self.connected = True
             self.connection_attempts = 0
             self.last_connection_error = None
-            log.info("✅ MarketStream connected successfully")
+            log.info("✅ MarketStream connected successfully (source: %s)", 'TESTNET' if market_testnet else 'MAINNET')
             return True
             
         except Exception as e:
