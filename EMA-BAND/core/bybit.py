@@ -175,14 +175,87 @@ class BybitAdapter:
 
             raw_available = a.get('totalAvailableBalance')
             if raw_available is None or not str(raw_available).strip():
-                # Bybit documents account-wide balance fields as inapplicable to
-                # isolated margin. Do not mistake the missing field for a valid
-                # balance or infer available margin from equity. Fail closed.
+                # Bybit documents totalAvailableBalance as inapplicable to isolated
+                # margin. Only use the documented USDT isolated-margin derivative
+                # formula after verifying account margin mode; never substitute equity.
                 available = 0.0
                 log.warning(
-                    "Bybit omitted totalAvailableBalance; treating available balance as 0 "
-                    "to fail closed. Equity is not a substitute for available margin."
+                    "Bybit omitted totalAvailableBalance; checking account margin mode "
+                    "and isolated-margin USDT fields. Will fail closed if they cannot be verified."
                 )
+                try:
+                    account_info = self.get_account_info()
+                    margin_mode = str(account_info.get('marginMode') or '').strip().upper()
+                except Exception as exc:
+                    margin_mode = ''
+                    log.error("Could not verify Bybit margin mode for balance fallback: %s", exc)
+
+                if margin_mode == 'ISOLATED_MARGIN':
+                    coin_rows = a.get('coin') or []
+                    usdt = next(
+                        (item for item in coin_rows
+                         if str(item.get('coin') or '').strip().upper() == 'USDT'),
+                        None,
+                    )
+                    if usdt is None:
+                        log.error(
+                            "Isolated-margin fallback unavailable: Bybit returned no USDT coin row; "
+                            "available balance remains 0."
+                        )
+                    else:
+                        fields = ('walletBalance', 'totalPositionIM', 'totalOrderIM', 'locked', 'bonus')
+                        values = {}
+                        invalid_field = None
+                        for field in fields:
+                            raw_value = usdt.get(field)
+                            if raw_value is None or not str(raw_value).strip():
+                                invalid_field = field
+                                break
+                            try:
+                                value = float(raw_value)
+                            except (TypeError, ValueError, OverflowError):
+                                invalid_field = field
+                                break
+                            if not math.isfinite(value) or value < 0:
+                                invalid_field = field
+                                break
+                            values[field] = value
+
+                        if invalid_field:
+                            log.error(
+                                "Isolated-margin fallback unavailable: missing/invalid USDT %s; "
+                                "available balance remains 0.",
+                                invalid_field,
+                            )
+                        else:
+                            calculated = (
+                                values['walletBalance']
+                                - values['totalPositionIM']
+                                - values['totalOrderIM']
+                                - values['locked']
+                                - values['bonus']
+                            )
+                            if not math.isfinite(calculated) or calculated < 0:
+                                log.error(
+                                    "Isolated-margin available-balance formula produced an invalid "
+                                    "value; available balance remains 0."
+                                )
+                            else:
+                                available = calculated
+                                log.info(
+                                    "Calculated isolated-margin USDT available balance using "
+                                    "Bybit's documented formula: walletBalance %.8f - positionIM "
+                                    "%.8f - orderIM %.8f - locked %.8f - bonus %.8f = %.8f USDT",
+                                    values['walletBalance'], values['totalPositionIM'],
+                                    values['totalOrderIM'], values['locked'], values['bonus'],
+                                    available,
+                                )
+                else:
+                    log.warning(
+                        "Isolated-margin balance fallback refused: marginMode=%r; "
+                        "available balance remains 0.",
+                        margin_mode or 'unknown',
+                    )
             else:
                 try:
                     available = float(raw_available)
