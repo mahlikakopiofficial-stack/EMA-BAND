@@ -46,6 +46,14 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test/test_backtest_live_alignment.py
 
+      - name: Balance response fail-closed tests
+        working-directory: EMA-BAND
+        env:
+          ENABLE_LIVE_TRADING: "false"
+          ENABLE_SHORT: "false"
+          PYTHONPATH: .
+        run: pytest -q tests/test/test_bybit_balance_fail_closed.py
+
   actual-backtest:
     runs-on: ubuntu-latest
     needs: strategy-alignment
