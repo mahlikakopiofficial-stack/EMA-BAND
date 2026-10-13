@@ -4,6 +4,7 @@ from core.models import PendingOrder
 
 def test_reconcile_adopts_exchange_order_id_and_execution(env):
     settings, store, telegram, adapter = env
+    settings.enable_live_trading = True  # exchange behavior is exercised through FakeAdapter only
     settings.enable_live_trading = True  # these tests reconcile mocked exchange state
     engine = Engine(settings, store, telegram, adapter=adapter)
     p = PendingOrder("SUBMITTING:1", "LINK-1", "BTCUSDT", "LONG", "ENTRY", 0, 1, status="SUBMITTING", lot_id="LOT-1", cycle_id="C1", candle_start=1)
@@ -25,6 +26,7 @@ def test_reconcile_adopts_exchange_order_id_and_execution(env):
 
 def test_reconcile_blocks_silent_loss_of_managed_position(env):
     settings, store, telegram, adapter = env
+    settings.enable_live_trading = True  # exchange behavior is exercised through FakeAdapter only
     engine = Engine(settings, store, telegram, adapter=adapter)
     from core.models import Position
     pos = Position("BTCUSDT", "LONG", 1, 100, 1, managed=True)
