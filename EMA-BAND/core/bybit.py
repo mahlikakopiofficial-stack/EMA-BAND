@@ -182,14 +182,63 @@ class BybitAdapter:
 
             raw_available = a.get('totalAvailableBalance')
             if raw_available is None or not str(raw_available).strip():
-                # Bybit documents account-wide balance fields as inapplicable to
-                # isolated margin. Do not mistake the missing field for a valid
-                # balance or infer available margin from equity. Fail closed.
+                # Bybit documents totalAvailableBalance as inapplicable to
+                # isolated margin. For that mode only, use its documented
+                # per-coin derivatives formula:
+                # walletBalance - totalPositionIM - totalOrderIM - locked - bonus.
+                # Do not apply this formula to cross/portfolio margin, and never
+                # substitute totalEquity for available balance.
                 available = 0.0
-                log.warning(
-                    "Bybit omitted totalAvailableBalance; treating available balance as 0 "
-                    "to fail closed. Equity is not a substitute for available margin."
-                )
+                try:
+                    account = self.get_account_info()
+                    margin_mode = str(account.get('marginMode') or '').strip().upper()
+                    if margin_mode != 'ISOLATED_MARGIN':
+                        raise RuntimeError(
+                            f"account marginMode is {margin_mode or 'unknown'}, not ISOLATED_MARGIN"
+                        )
+
+                    coin_rows = a.get('coin') or []
+                    usdt = next(
+                        (row for row in coin_rows if str(row.get('coin') or '').upper() == 'USDT'),
+                        None,
+                    )
+                    if not isinstance(usdt, dict):
+                        raise RuntimeError('USDT coin-level margin data is missing')
+
+                    values = {}
+                    for field in ('walletBalance', 'totalPositionIM', 'totalOrderIM', 'locked', 'bonus'):
+                        raw = usdt.get(field)
+                        if raw is None or not str(raw).strip():
+                            raise RuntimeError(f'USDT {field} is missing')
+                        try:
+                            value = float(raw)
+                        except (TypeError, ValueError) as exc:
+                            raise RuntimeError(f'USDT {field} is not numeric') from exc
+                        if not math.isfinite(value) or value < 0:
+                            raise RuntimeError(f'USDT {field} is invalid')
+                        values[field] = value
+
+                    available = max(
+                        0.0,
+                        values['walletBalance']
+                        - values['totalPositionIM']
+                        - values['totalOrderIM']
+                        - values['locked']
+                        - values['bonus'],
+                    )
+                    log.info(
+                        "Derived isolated-margin USDT available balance using Bybit's "
+                        "coin-level formula: walletBalance - totalPositionIM - totalOrderIM "
+                        "- locked - bonus = %.8f USDT",
+                        available,
+                    )
+                except Exception as e:
+                    available = 0.0
+                    log.error(
+                        "Bybit omitted totalAvailableBalance and isolated-margin available "
+                        "balance could not be verified; treating available as 0: %s",
+                        e,
+                    )
             else:
                 try:
                     available = float(raw_available)
