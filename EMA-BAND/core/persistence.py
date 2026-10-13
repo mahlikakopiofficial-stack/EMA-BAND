@@ -155,6 +155,12 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms); CREATE INDEX IF NOT E
                                (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def total_realized_pnl(self):
+        """Net realized PnL across all stored paper/live trades, without a recency cap."""
+        with self.lock:
+            row=self.db.execute('SELECT COALESCE(SUM(pnl), 0.0) AS total FROM trades').fetchone()
+        return float(row['total'] or 0.0)
+
     # NEW: surfaces execution-risk events (failed/uncertain/timed-out submissions,
     # hard stops, daily-loss/kill-switch trips) for the dashboard's Alerts panel.
     # These already land in the events table via self.store.event(...) -- this just
