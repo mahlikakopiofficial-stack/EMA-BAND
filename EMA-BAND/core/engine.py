@@ -114,6 +114,40 @@ class Engine:
    self.last_confirmed[s]=c['start']; self.candles[s].append(c); self._process_closed_candle(s)
  def _estimated_net(self,lot,price,qty=None):
   q=lot.qty if qty is None else qty; gross=(price-lot.entry_price)*q if lot.side=='LONG' else (lot.entry_price-price)*q; return gross-lot.entry_fee-abs(price*q)*self.settings.taker_fee_rate
+ def account_snapshot(self):
+  """Return (equity, available, unrealized) without private API calls in paper mode."""
+  if self.settings.enable_live_trading:
+   equity,available=self.bybit.get_balance()
+   unrealized=sum(float(x.get('unrealisedPnl') or 0) for x in self.bybit.get_positions())
+   return float(equity),float(available),float(unrealized)
+
+  # Paper mode uses only virtual capital + local paper trade records. Market tickers
+  # are public data; never ask the authenticated wallet/positions/order endpoints.
+  capital=float(getattr(self.settings,'paper_starting_capital_usdt',1000.0))
+  realized=float(self.store.total_realized_pnl())
+  try:
+   market=self.bybit.tickers()
+  except Exception as exc:
+   log.warning('Paper account: market prices unavailable for mark-to-market: %s',exc)
+   market={}
+  with self.lock:
+   lots=[x for x in self.lots.values() if x.status=='OPEN']
+   pending=[p for p in self.pending.values() if p.action=='ENTRY' and p.status in ACTIVE]
+   open_notional=sum(float(x.qty)*float(x.entry_price) for x in lots)
+   pending_notional=sum(
+    float(p.requested_qty)*float(p.avg_fill_price or (market.get(p.symbol,{}) or {}).get('last') or 0)
+    for p in pending
+   )
+   unrealized=0.0
+   for lot in lots:
+    quote=market.get(lot.symbol,{}) or {}
+    price=float(quote.get('last') or quote.get('price') or lot.entry_price)
+    if price>0:
+     unrealized+=self._estimated_net(lot,price)
+  equity=max(0.0,capital+realized+unrealized)
+  leverage=max(float(self.settings.leverage),1.0)
+  available=max(0.0,equity-(open_notional+pending_notional)/leverage)
+  return equity,available,unrealized
  def _check_exits(self,s,price,row=None):
   # FIXED: this method mutates self.lots/self.pending (exit_armed, request_close_lot)
   # and used to be called both from inside the lock (on_candle path) AND from outside
@@ -238,7 +272,10 @@ class Engine:
     log.error('ENTRY_GATE %s: could not verify live price (%s), refusing entry to stay safe',signal.symbol,exc)
     return False
    try:
-    total_equity,available=self.bybit.get_balance()
+    if self.settings.enable_live_trading:
+     total_equity,available=self.bybit.get_balance()
+    else:
+     total_equity,available,_paper_unrealized=self.account_snapshot()
     log.warning(
      'ENTRY_GATE %s balance=%.8f size_pct=%.4f min_trade=%.4f',
      signal.symbol,
@@ -551,6 +588,11 @@ class Engine:
     if q<=0: continue
     old=self.positions.get(key); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); liq=float(item.get('liqPrice') or (old.liq_price if old else 0)); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); p=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); p.qty=q; p.entry_price=entry; p.liq_price=liq; p.position_idx=0; p.managed=managed; self.positions[key]=p; self.store.save_position(p)
  def reconcile(self):
+  if not self.settings.enable_live_trading:
+   # Paper positions live in their own database; never query private Bybit endpoints.
+   self.last_reconcile=time.time()
+   log.debug('Paper mode: skipped private exchange reconciliation')
+   return
   with self.lock:
    exchange={}
    raw_positions=self.bybit.get_positions()
@@ -611,7 +653,9 @@ class Engine:
    for s in self.settings.symbols: self.long_entry_counts[s]=self.store.lot_count(s,'LONG')
    self.last_reconcile=time.time()
  def pnl_review(self):
-  eq,av=self.bybit.get_balance(); unreal=sum(float(x.get('unrealisedPnl') or 0) for x in self.bybit.get_positions()); realized=sum(float(x['pnl']) for x in self.store.recent_trades(100)); self.store.snapshot(eq,av,realized,unreal,len(self.positions))
+  eq,av,unreal=self.account_snapshot()
+  realized=self.store.total_realized_pnl()
+  self.store.snapshot(eq,av,realized,unreal,len(self.positions))
  def _live_ema_rsi_frame(self,s,price,df=None):
   if df is None:
    df=self._frame(s)
@@ -702,7 +746,7 @@ class Engine:
              now=time.time()
 
              market_ok=self.ws_market.is_connected() if hasattr(self.ws_market,'is_connected') else True
-             private_ok=self.ws_private.is_connected() if hasattr(self.ws_private,'is_connected') else True
+             private_ok=(self.ws_private.is_connected() if hasattr(self.ws_private,'is_connected') else True) if self.settings.enable_live_trading else True
 
              if not market_ok:
                  log.warning('MarketStream disconnected, attempting reconnect...')
@@ -738,8 +782,7 @@ class Engine:
 
              if self.settings.telegram_hourly_pnl and now-self.last_hourly_report>=self.settings.telegram_pnl_interval_seconds:
                  try:
-                     eq,av=self.bybit.get_balance()
-                     unreal=sum(float(x.get('unrealisedPnl') or 0) for x in self.bybit.get_positions())
+                     eq,av,unreal=self.account_snapshot()
                      realized_today=sum(float(t['pnl']) for t in self.store.recent_trades(500) if t['closed_at_ms']>=calendar.timegm(time.strptime(time.strftime('%Y-%m-%d',time.gmtime()),'%Y-%m-%d'))*1000)
                      open_lots=sum(1 for x in self.lots.values() if x.status=='OPEN')
                      mode='LIVE TESTNET' if self.settings.enable_live_trading and self.settings.bybit_testnet else ('LIVE MAINNET' if self.settings.enable_live_trading else 'PAPER')

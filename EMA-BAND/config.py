@@ -14,6 +14,14 @@ def _int(n,d):
 def _str(n,d):
  r=os.getenv(n); return d if r is None else r.strip()
 def _symbols(): return tuple(x.strip().upper() for x in os.getenv('SYMBOLS','BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,AVAXUSDT,LINKUSDT,SUIUSDT,NEARUSDT,APTUSDT,LTCUSDT,DOTUSDT,BCHUSDT,TRXUSDT,UNIUSDT,FILUSDT,ETCUSDT,INJUSDT,WIFUSDT,RENDERUSDT,TIAUSDT,ARBUSDT,OPUSDT,ATOMUSDT,SEIUSDT,STXUSDT,ORDIUSDT,AAVEUSDT,ICPUSDT,GALAUSDT,KASUSDT,JASMYUSDT,WLDUSDT,ARUSDT,ALGOUSDT,RUNEUSDT,THETAUSDT,ENAUSDT,NOTUSDT').split(',') if x.strip())
+def _database_path():
+ raw=_str('DATABASE_PATH','')
+ if raw:
+  path=Path(raw)
+  return path if path.is_absolute() else ROOT/path
+ # Keep simulated positions and trade records separate from any live account state.
+ name='trading.db' if _bool('ENABLE_LIVE_TRADING',False) else 'paper-trading.db'
+ return ROOT/'data'/name
 
 @dataclass(frozen=True)
 class Settings:
@@ -23,6 +31,9 @@ class Settings:
  enable_live_trading:bool=field(default_factory=lambda:_bool('ENABLE_LIVE_TRADING',False))
  category:str='linear'; timeframe:str='15'; symbols:tuple[str,...]=field(default_factory=_symbols)
  enable_long:bool=field(default_factory=lambda:_bool('ENABLE_LONG',True)); enable_short:bool=field(default_factory=lambda:_bool('ENABLE_SHORT',False))
+
+ # --- Paper-mode account; never sourced from the real exchange wallet ---
+ paper_starting_capital_usdt:float=field(default_factory=lambda:_float('PAPER_STARTING_CAPITAL_USDT',1000.0))
 
  # --- Position sizing / caps ---
  position_size_pct:float=field(default_factory=lambda:_float('POSITION_SIZE_PCT',10.0))
@@ -85,7 +96,7 @@ class Settings:
  kill_switch_file:str=field(default_factory=lambda:_str('KILL_SWITCH_FILE','EMERGENCY_STOP'))       # touch this file to block all new entries
  require_env_file_permissions_check:bool=field(default_factory=lambda:_bool('CHECK_ENV_PERMISSIONS',True))
 
- dashboard_host:str=field(default_factory=lambda:os.getenv('DASHBOARD_HOST','127.0.0.1')); dashboard_port:int=field(default_factory=lambda:_int('DASHBOARD_PORT',8080)); database_path:Path=ROOT/'data'/'trading.db'; log_dir:Path=ROOT/'logs'
+ dashboard_host:str=field(default_factory=lambda:os.getenv('DASHBOARD_HOST','127.0.0.1')); dashboard_port:int=field(default_factory=lambda:_int('DASHBOARD_PORT',8080)); database_path:Path=field(default_factory=_database_path); log_dir:Path=ROOT/'logs'
 
  def validate(self):
   e=[]
@@ -94,6 +105,7 @@ class Settings:
   if not self.symbols: e.append('SYMBOLS must not be empty')
   if not 0<self.position_size_pct<=100: e.append('POSITION_SIZE_PCT must be >0 and <=100')
   if self.max_long_entries<1: e.append('MAX_LONG_ENTRIES must be >=1')
+  if not self.paper_starting_capital_usdt>0: e.append('PAPER_STARTING_CAPITAL_USDT must be >0')
   if self.min_trade_usdt<=0: e.append('MIN_TRADE_USDT must be >0')
   if self.max_order_notional_usdt<0: e.append('MAX_ORDER_NOTIONAL_USDT must be >=0 (0=disabled)')
   if not 1<=self.leverage<=25: e.append('LEVERAGE must be between 1 and 25')
