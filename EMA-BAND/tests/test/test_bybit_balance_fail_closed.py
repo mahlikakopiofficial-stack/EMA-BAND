@@ -65,7 +65,7 @@ def test_blank_available_balance_fails_closed_when_mode_is_not_isolated(raw_avai
 
     assert equity == pytest.approx(51.78041907)
     assert available == 0.0
-    assert "omitted totalAvailableBalance" in caplog.text
+    assert "totalAvailableBalance" in caplog.text
     assert "remains 0" in caplog.text
     adapter.http.get_wallet_balance.assert_called_once_with(
         accountType="UNIFIED", coin="USDT"
@@ -98,7 +98,7 @@ def test_valid_available_balance_is_preserved():
 
     assert equity == pytest.approx(51.78041907)
     assert available == pytest.approx(40.125)
-    adapter.http.get_account_info.assert_not_called()
+    adapter.http.get_account_info.assert_called_once_with()
 
 
 def test_isolated_margin_uses_bybit_documented_usdt_available_balance_formula(caplog):
@@ -247,7 +247,7 @@ def test_invalid_isolated_margin_component_keeps_balance_zero(field, value, capl
     assert f"USDT {field}" in caplog.text
 
 
-def test_explicit_zero_total_available_balance_is_not_overridden():
+def test_isolated_mode_uses_coin_formula_even_if_account_wide_field_is_zero():
     adapter = make_adapter({
         "totalEquity": "51.78041907",
         "totalAvailableBalance": "0",
@@ -263,6 +263,16 @@ def test_explicit_zero_total_available_balance_is_not_overridden():
 
     _, available = adapter.get_balance()
 
+    assert available == pytest.approx(51.8372)
+    adapter.http.get_account_info.assert_called_once_with()
+
+def test_unknown_margin_mode_does_not_trust_nonblank_account_balance():
+    adapter = make_adapter({
+        "totalEquity": "51.78041907",
+        "totalAvailableBalance": "49.5",
+    }, margin_mode="")
+
+    _, available = adapter.get_balance()
+
     assert available == 0.0
-    adapter.http.get_account_info.assert_not_called()
 
