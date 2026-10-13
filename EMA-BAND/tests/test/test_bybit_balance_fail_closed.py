@@ -175,3 +175,94 @@ def test_isolated_balance_can_proceed_to_positive_order_sizing():
 
     assert qty > 0
     assert qty * 1000.0 <= available
+
+@pytest.mark.parametrize("margin_mode", ["REGULAR_MARGIN", "PORTFOLIO_MARGIN", "", None])
+def test_blank_available_balance_does_not_apply_isolated_formula_to_other_modes(margin_mode):
+    adapter = make_adapter(isolated_wallet(), margin_mode=margin_mode or "")
+
+    _, available = adapter.get_balance()
+
+    assert available == 0.0
+
+
+def test_account_info_failure_keeps_balance_zero(caplog):
+    adapter = make_adapter(isolated_wallet(), margin_mode="ISOLATED_MARGIN")
+    adapter.http.get_account_info.side_effect = RuntimeError("API unavailable")
+
+    with caplog.at_level(logging.ERROR, logger="BYBIT_ADAPTER"):
+        _, available = adapter.get_balance()
+
+    assert available == 0.0
+    assert "Could not verify Bybit margin mode" in caplog.text
+
+
+def test_missing_usdt_coin_row_keeps_balance_zero(caplog):
+    adapter = make_adapter({
+        "totalEquity": "51.78041907",
+        "totalAvailableBalance": "",
+        "coin": [{"coin": "USDC", "walletBalance": "100"}],
+    }, margin_mode="ISOLATED_MARGIN")
+
+    with caplog.at_level(logging.ERROR, logger="BYBIT_ADAPTER"):
+        _, available = adapter.get_balance()
+
+    assert available == 0.0
+    assert "no USDT coin row" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("walletBalance", ""),
+        ("walletBalance", "NaN"),
+        ("totalPositionIM", None),
+        ("totalPositionIM", "-0.1"),
+        ("totalOrderIM", "Infinity"),
+        ("locked", "not-a-number"),
+        ("bonus", "-1"),
+    ],
+)
+def test_invalid_isolated_margin_component_keeps_balance_zero(field, value, caplog):
+    values = {
+        "walletBalance": "51.8372",
+        "totalPositionIM": "0",
+        "totalOrderIM": "0",
+        "locked": "0",
+        "bonus": "0",
+    }
+    values[field] = value
+    adapter = make_adapter(
+        {
+            "totalEquity": "51.78041907",
+            "totalAvailableBalance": "",
+            "coin": [{"coin": "USDT", **values}],
+        },
+        margin_mode="ISOLATED_MARGIN",
+    )
+
+    with caplog.at_level(logging.ERROR, logger="BYBIT_ADAPTER"):
+        _, available = adapter.get_balance()
+
+    assert available == 0.0
+    assert f"USDT {field}" in caplog.text
+
+
+def test_explicit_zero_total_available_balance_is_not_overridden():
+    adapter = make_adapter({
+        "totalEquity": "51.78041907",
+        "totalAvailableBalance": "0",
+        "coin": [{
+            "coin": "USDT",
+            "walletBalance": "51.8372",
+            "totalPositionIM": "0",
+            "totalOrderIM": "0",
+            "locked": "0",
+            "bonus": "0",
+        }],
+    }, margin_mode="ISOLATED_MARGIN")
+
+    _, available = adapter.get_balance()
+
+    assert available == 0.0
+    adapter.http.get_account_info.assert_not_called()
+
