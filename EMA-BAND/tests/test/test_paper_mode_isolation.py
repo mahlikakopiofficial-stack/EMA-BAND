@@ -38,6 +38,7 @@ def test_paper_snapshot_uses_virtual_capital_not_private_wallet_calls(env):
 def test_paper_entry_routes_signal_to_virtual_lot_without_exchange_order(env):
     settings, store, telegram, adapter = env
     engine = Engine(settings, store, telegram, adapter=adapter)
+    engine.ws_market = DummyStream()
     adapter.get_balance = Mock(side_effect=AssertionError("private wallet called in paper mode"))
     adapter.get_positions = Mock(side_effect=AssertionError("private positions called in paper mode"))
     adapter.size_from_balance = Mock(return_value=1.0)
