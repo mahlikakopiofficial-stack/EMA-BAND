@@ -2,6 +2,7 @@ from __future__ import annotations
 from decimal import Decimal,ROUND_DOWN,ROUND_UP,ROUND_HALF_UP
 import time
 import logging
+import math
 
 log = logging.getLogger('BYBIT_ADAPTER')
 
@@ -169,8 +170,35 @@ class BybitAdapter:
             
             a = rows[0]
             total_equity = float(a.get('totalEquity') or 0)
-            available = float(a.get('totalAvailableBalance') or 0)
-            
+            if not math.isfinite(total_equity) or total_equity < 0:
+                raise RuntimeError('Bybit returned an invalid totalEquity value')
+
+            raw_available = a.get('totalAvailableBalance')
+            if raw_available is None or not str(raw_available).strip():
+                # Bybit documents account-wide balance fields as inapplicable to
+                # isolated margin. Do not mistake the missing field for a valid
+                # balance or infer available margin from equity. Fail closed.
+                available = 0.0
+                log.warning(
+                    "Bybit omitted totalAvailableBalance; treating available balance as 0 "
+                    "to fail closed. Equity is not a substitute for available margin."
+                )
+            else:
+                try:
+                    available = float(raw_available)
+                except (TypeError, ValueError):
+                    available = 0.0
+                    log.error(
+                        "Bybit returned a non-numeric totalAvailableBalance; "
+                        "treating available balance as 0 to fail closed."
+                    )
+                if not math.isfinite(available) or available < 0:
+                    available = 0.0
+                    log.error(
+                        "Bybit returned an invalid totalAvailableBalance; "
+                        "treating available balance as 0 to fail closed."
+                    )
+
             log.debug(f"Balance: equity={total_equity:.8f}, available={available:.8f}")
             return total_equity, available
         

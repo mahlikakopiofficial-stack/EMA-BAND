@@ -14,6 +14,16 @@ chmod 600 .env
 
 If credentials have ever been exposed, revoke and regenerate both the Bybit API key and Telegram bot token before continuing.
 
+## Safe defaults and VPS parity
+
+A fresh configuration defaults to **paper mode** (`ENABLE_LIVE_TRADING=false`) and **Bybit testnet** (`BYBIT_TESTNET=true`). Keep those values during setup and testing. The environment file on the VPS remains the runtime source of truth; it is deliberately not stored in GitHub because it contains credentials and environment-specific switches. GitHub Actions secrets and Codespaces secrets are not automatically copied to a VPS `.env`.
+
+The committed `.env.example` now mirrors the VPS's non-secret EMA-BAND strategy profile (15-minute EMA 200/210, 5-candle entry cooldown, 0-candle minimum exit wait, RSI 75 exit threshold, symbol list, and risk limits) while keeping the connection defaults safe. Do not copy live credentials into this template or a Git commit.
+
+## Bybit available-balance handling
+
+Bybit documents that account-wide wallet-balance fields are not applicable to isolated margin; its documented isolated-derivatives available-balance formula uses coin-level fields instead ([Bybit Get Wallet Balance](https://bybit-exchange.github.io/docs/v5/account/wallet-balance)). The adapter does **not** infer available margin from equity. If `totalAvailableBalance` is blank or invalid, it logs the reason and treats available balance as zero, blocking new entries. This is intentional fail-closed behavior; do not deploy a balance calculation that changes order eligibility until it has separate mocked-response tests and testnet validation.
+
 ## Requirements
 
 - Python 3.11 or newer

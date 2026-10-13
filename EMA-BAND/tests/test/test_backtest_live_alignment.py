@@ -12,7 +12,7 @@ def test_backtest_sizing_uses_available_balance_without_multiplying_leverage(mon
     monkeypatch.setattr(backtest, "LEVERAGE", 3.0)
 
     assert backtest.target_entry_notional(1000.0) == 100.0
-    assert backtest.target_entry_notional(50.0) == 15.0
+    assert backtest.target_entry_notional(50.0) == 5.0
 
 
 def test_backtest_keeps_live_exit_armed_until_profitable(monkeypatch):
