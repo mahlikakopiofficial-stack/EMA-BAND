@@ -19,8 +19,8 @@ def _symbols(): return tuple(x.strip().upper() for x in os.getenv('SYMBOLS','BTC
 class Settings:
  bybit_api_key:str=field(default_factory=lambda:os.getenv('BYBIT_API_KEY','').strip())
  bybit_api_secret:str=field(default_factory=lambda:os.getenv('BYBIT_API_SECRET','').strip())
- bybit_testnet:bool=field(default_factory=lambda:_bool('BYBIT_TESTNET',False))
- enable_live_trading:bool=field(default_factory=lambda:_bool('ENABLE_LIVE_TRADING',True))
+ bybit_testnet:bool=field(default_factory=lambda:_bool('BYBIT_TESTNET',True))
+ enable_live_trading:bool=field(default_factory=lambda:_bool('ENABLE_LIVE_TRADING',False))
  category:str='linear'; timeframe:str='15'; symbols:tuple[str,...]=field(default_factory=_symbols)
  enable_long:bool=field(default_factory=lambda:_bool('ENABLE_LONG',True)); enable_short:bool=field(default_factory=lambda:_bool('ENABLE_SHORT',False))
 
@@ -35,7 +35,7 @@ class Settings:
  leverage:int=field(default_factory=lambda:_int('LEVERAGE',3))                          # "Leverage 3x"
  liquidation_buffer_pct:float=field(default_factory=lambda:_float('LIQUIDATION_BUFFER_PCT',20.0))
  maintenance_margin_rate:float=field(default_factory=lambda:_float('MAINTENANCE_MARGIN_RATE',0.005))
- stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',80.0))         # deprecated; retained for compatibility
+ stop_loss_pct:float=field(default_factory=lambda:_float('STOP_LOSS_PCT',30.0))         # deprecated; retained for compatibility
  max_daily_loss_usdt:float=field(default_factory=lambda:_float('MAX_DAILY_LOSS_USDT',100))
  max_total_open_lots:int=field(default_factory=lambda:_int('MAX_TOTAL_OPEN_LOTS',DEFAULT_MAX_TOTAL_OPEN_LOTS))  # 0=disabled; global cap across ALL symbols
  require_leverage_confirmation:bool=field(default_factory=lambda:_bool('REQUIRE_LEVERAGE_CONFIRMATION',True))  # fail-closed: block a symbol if its leverage could not be set
@@ -52,8 +52,8 @@ class Settings:
  ema_band_fast:int=field(default_factory=lambda:_int('EMA_BAND_FAST',200))
  ema_band_slow:int=field(default_factory=lambda:_int('EMA_BAND_SLOW',210))
  ema_band_rsi_period:int=field(default_factory=lambda:_int('EMA_BAND_RSI_PERIOD',20))
- ema_band_cooldown_candles:int=field(default_factory=lambda:_int('EMA_BAND_COOLDOWN_CANDLES',0))
- ema_band_exit_candles:int=field(default_factory=lambda:_int('EMA_BAND_EXIT_CANDLES',5))
+ ema_band_cooldown_candles:int=field(default_factory=lambda:_int('EMA_BAND_COOLDOWN_CANDLES',5))
+ ema_band_exit_candles:int=field(default_factory=lambda:_int('EMA_BAND_EXIT_CANDLES',0))
  ema_band_exit_rsi:float=field(default_factory=lambda:_float('EMA_BAND_EXIT_RSI',75.0))
 
  ema_rsi_ema_period:int=field(default_factory=lambda:_int('EMA_RSI_EMA_PERIOD',200))
