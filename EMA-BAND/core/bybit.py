@@ -62,6 +62,16 @@ class BybitAdapter:
                 log.error(f"{func.__name__} rejected before any Bybit call (not retried): {e}")
                 raise
             except Exception as e:
+                # Bybit error 110017 is a definitive order rejection (the requested
+                # quantity cannot be applied to the current position). It is not a
+                # transient network error: repeating the same close cannot fix it.
+                # Let the engine reconcile the exchange position before any new try.
+                if '110017' in str(e):
+                    log.error(
+                        "%s rejected by Bybit with 110017; not retrying identical request: %s",
+                        func.__name__, e,
+                    )
+                    raise
                 if attempt < max_retries - 1:
                     # Exponential backoff: 1s, 2s, 4s
                     backoff = 2 ** attempt

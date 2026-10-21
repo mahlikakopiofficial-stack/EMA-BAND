@@ -158,6 +158,9 @@ class Engine:
   with self.lock:
    self._check_exits_locked(s,price,row)
  def _check_exits_locked(self,s,price,row=None):
+  # A local lot with unresolved exchange reconciliation must not drive another
+  # reduce-only request using a possibly stale quantity.
+  if any(x.symbol==s and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()): return
   candle_ms=int(self.settings.timeframe)*60*1000
   current_candle_start=int(row['start']) if row is not None and 'start' in row else None
   merged=self.positions.get((s,'LONG'))
@@ -210,6 +213,10 @@ class Engine:
 
  def open_position(self,signal):
   with self.lock:
+   if any(x.symbol==signal.symbol and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()):
+    self.store.event('RISK_BLOCK',{'reason':'exit_reconciliation_required'},signal.symbol,'LONG')
+    log.error('ENTRY_GATE %s: blocked while exchange exit reconciliation is unresolved',signal.symbol)
+    return False
    open_lots=sum(1 for x in self.lots.values() if x.symbol==signal.symbol and x.side=='LONG' and x.status=='OPEN')
    pending_lots=sum(1 for p in self.pending.values() if p.action=='ENTRY' and p.symbol==signal.symbol and p.side=='LONG' and p.status in ACTIVE)
    if open_lots+pending_lots>=self.settings.max_long_entries:
@@ -487,19 +494,24 @@ class Engine:
 
  def request_close_lot(self,lot,price,reason,force=False):
   with self.lock:
+   if getattr(lot,'exit_reconciliation_required',False): return
    if not force and (not lot.exit_armed or self._estimated_net(lot,price)<=0): return
    if any(p.action=='EXIT' and p.symbol==lot.symbol and p.side==lot.side and p.status in ACTIVE for p in self.pending.values()): return
    if not self.settings.enable_live_trading: self.close_lot_paper(lot,price,reason); return
    link=f'EMA-X-{lot.symbol}-{int(time.time()*1000)}-{uuid.uuid4().hex[:5]}'[:36]; p=PendingOrder('SUBMITTING:'+uuid.uuid4().hex,link,lot.symbol,lot.side,'EXIT',0,lot.qty,reason=reason,created_at_ms=int(time.time()*1000),lot_id=lot.lot_id,status='SUBMITTING'); self.pending[p.order_id]=p; self.store.save_pending(p)
    try: r=self.bybit.close_market(lot.symbol,lot.side,lot.qty,link,0); oid=r['result']['orderId']
    except Exception as exc:
+    if self._is_zero_position_rejection(exc):
+     self._hold_exit_for_reconciliation(lot.symbol,lot.side,reason=reason,pending=p,lot_id=lot.lot_id,query_exchange=True)
+     return
     self.store.event('EXIT_SUBMISSION_UNCERTAIN',{'error':str(exc),'order_link_id':link,'lot_id':lot.lot_id},lot.symbol,lot.side)
-    log.error('EXIT submission failed for %s %s (%s): %s -- order kept pending, will be reconciled/retried',lot.symbol,lot.side,reason,exc)
-    self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{lot.symbol} {lot.side}\nReason: {reason}\nError: {str(exc)[:150]}\nBot will re-check with Bybit and retry automatically.')
+    log.error('EXIT submission failed for %s %s (%s): %s -- order kept pending for reconciliation',lot.symbol,lot.side,reason,exc)
+    self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{lot.symbol} {lot.side}\nReason: {reason}\nError: {str(exc)[:150]}\nBot will reconcile before retrying.')
     return
    lot.exit_order_id=oid; self.store.save_lot(lot); self._replace_pending(p,oid)
  def request_close_merged(self,s,side,qty,price,reason):
   with self.lock:
+   if any(x.symbol==s and x.side==side and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()): return
    if any(p.action=='EXIT' and p.symbol==s and p.side==side and p.status in ACTIVE for p in self.pending.values()): return
    lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']
    if not lots: return
@@ -512,9 +524,12 @@ class Engine:
    try:
     r=self.bybit.close_market(s,side,qty,link,0); oid=r['result']['orderId']
    except Exception as exc:
+    if self._is_zero_position_rejection(exc):
+     self._hold_exit_for_reconciliation(s,side,reason=reason,pending=p,query_exchange=True)
+     return
     self.store.event('EXIT_SUBMISSION_UNCERTAIN',{'error':str(exc),'order_link_id':link},s,side)
     log.error('Merged EXIT submission failed for %s %s: %s',s,side,exc)
-    self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{s} {side}\nReason: {reason}\nError: {str(exc)[:150]}')
+    self.telegram.send(f'⚠️ EXIT SUBMISSION FAILED\n{s} {side}\nReason: {reason}\nError: {str(exc)[:150]}\nBot will reconcile before retrying.')
     return
    self._replace_pending(p,oid)
  def close_lot_paper(self,lot,price,reason):
@@ -522,6 +537,11 @@ class Engine:
  def _rebuild_position(self,s,side):
   lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']; key=(s,side)
   if not lots: self.positions.pop(key,None); self.store.delete_position(s,side); self.long_entry_counts[s]=0; return
+  if any(getattr(x,'exit_reconciliation_required',False) for x in lots):
+   # Lot allocation is not authoritative while the exchange mismatch is unresolved.
+   # Preserve any directly verified exchange position rather than rebuilding from stale lots.
+   self.long_entry_counts[s]=len(lots)
+   return
   qty=sum(x.qty for x in lots); avg=weighted_average_entry(lots); first=min(lots,key=lambda x:x.entry_time_ms); p=Position(s,side,qty,avg,first.entry_time_ms,first.entry_order_id,first.cycle_id,0,True,entry_fee=sum(x.entry_fee for x in lots),entry_count=len(lots)); self.positions[key]=p; self.store.save_position(p); self.long_entry_counts[s]=len(lots)
  def on_order(self,message):
   with self.lock:
@@ -578,6 +598,60 @@ class Engine:
   self.store.trade(Trade(lot.symbol,lot.side,inc,lot.entry_price,px,pnl,alloc+fee,lot.entry_time_ms,int(time.time()*1000),lot.cycle_id,p.reason,lot.entry_order_id,p.order_id)); lot.qty-=inc; lot.entry_fee=max(0,lot.entry_fee-alloc); lot.exit_fee+=fee; p.processed_fill_qty+=inc; p.processed_fill_fee+=fee; self.store.save_pending(p)
   if lot.qty<=1e-12: self.store.delete_lot(lot.lot_id); self.lots.pop(lot.lot_id,None); self._rebuild_position(lot.symbol,lot.side); self._drop_pending(p); self.telegram.send(f'{"🟢" if pnl>=0 else "🔴"} TRADE CLOSED\n{lot.symbol} {lot.side}\nQty: {inc}\nExit: {px}\nPnL: {pnl:.6f}\nReason: {p.reason}')
   else: self.store.save_lot(lot); self._rebuild_position(lot.symbol,lot.side)
+ @staticmethod
+ def _is_zero_position_rejection(exc):
+  # Bybit uses 110017 for an order quantity that cannot be applied to the
+  # current position. This is a deterministic rejection, not a pending order.
+  return '110017' in str(exc)
+ def _hold_exit_for_reconciliation(self,s,side,reason,pending=None,lot_id=None,query_exchange=True,exchange_rows=None):
+  """Stop repeated closes while preserving lots until exchange-side accounting is verified."""
+  with self.lock:
+   key=(s,side)
+   lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']
+   if lot_id:
+    lot=self.lots.get(lot_id)
+    if lot is not None and all(x.lot_id!=lot.lot_id for x in lots): lots.append(lot)
+   first=not any(getattr(x,'exit_reconciliation_required',False) for x in lots)
+   for lot in lots:
+    lot.exit_reconciliation_required=True
+    self.store.save_lot(lot)
+   if pending is not None and self.pending.get(pending.order_id) is pending:
+    self._drop_pending(pending)
+   exchange_qty=None
+   query_error=None
+   try:
+    rows=exchange_rows
+    if query_exchange or rows is None:
+     rows=self.bybit.get_positions()
+    matches=[x for x in (rows or []) if x.get('symbol')==s and
+             (('LONG' if x.get('side')=='Buy' else 'SHORT' if x.get('side')=='Sell' else None)==side) and
+             float(x.get('size') or 0)>EPSILON]
+    exchange_qty=sum(float(x.get('size') or 0) for x in matches)
+    if exchange_qty<=EPSILON:
+     self.positions.pop(key,None)
+     self.store.delete_position(s,side)
+    else:
+     row=matches[0]
+     old=self.positions.get(key)
+     entry=float(row.get('avgPrice') or row.get('entryPrice') or (old.entry_price if old else 0))
+     liq=float(row.get('liqPrice') or (old.liq_price if old else 0))
+     pos=old or Position(s,side,exchange_qty,entry,int(time.time()*1000),position_idx=0,managed=True,entry_count=self.store.lot_count(s,side))
+     pos.qty=exchange_qty; pos.entry_price=entry; pos.liq_price=liq; pos.managed=True
+     self.positions[key]=pos
+     self.store.save_position(pos)
+   except Exception as exc:
+    query_error=str(exc)
+    log.exception('Could not verify %s %s after Bybit 110017 rejection',s,side)
+   self.store.event('EXIT_RECONCILIATION_REQUIRED',{
+    'reason':reason,'local_lots':len(lots),'exchange_qty':exchange_qty,
+    'position_query_error':query_error,'automatic_retry_paused':True,
+   },s,side)
+   log.error('EXIT RECONCILIATION REQUIRED %s %s: local lots retained; exchange_qty=%s query_error=%s',
+             s,side,exchange_qty,query_error)
+   if first:
+    state=(f'Bybit reports open quantity {exchange_qty:g};' if exchange_qty is not None and exchange_qty>EPSILON
+           else ('Bybit reports no open position;' if exchange_qty is not None else 'Bybit position query failed;'))
+    self.telegram.send(f'🚨 EXIT RECONCILIATION REQUIRED\n{s} {side}\nBybit rejected a reduce-only close (110017).\n{state} local trade records are preserved and automatic exits/entries for this symbol are paused.\nCheck Bybit order history, executions and closed P&L before clearing this hold.')
  def _drop_pending(self,p): self.pending.pop(p.order_id,None); self.store.delete_pending(p.order_id)
  def on_position(self,message):
   with self.lock:
@@ -585,7 +659,12 @@ class Engine:
     s=item.get('symbol'); raw=item.get('side'); q=float(item.get('size') or 0); side='LONG' if raw=='Buy' else 'SHORT' if raw=='Sell' else None
     if s not in self.settings.symbols or not side: continue
     key=(s,side)
-    if q<=0: continue
+    if q<=0:
+     if any(x.symbol==s and x.side==side and x.status=='OPEN' for x in self.lots.values()):
+      self._hold_exit_for_reconciliation(s,side,reason='private position stream reported zero size',query_exchange=False,exchange_rows=[])
+     else:
+      self.positions.pop(key,None); self.store.delete_position(s,side)
+     continue
     old=self.positions.get(key); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); liq=float(item.get('liqPrice') or (old.liq_price if old else 0)); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); p=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); p.qty=q; p.entry_price=entry; p.liq_price=liq; p.position_idx=0; p.managed=managed; self.positions[key]=p; self.store.save_position(p)
  def reconcile(self):
   if not self.settings.enable_live_trading:
@@ -601,9 +680,18 @@ class Engine:
     if s not in self.settings.symbols or not side or q<=0: continue
     key=(s,side); old=self.positions.get(key); managed=old.managed if old else any(l.symbol==s and l.side==side for l in self.lots.values()); entry=float(item.get('avgPrice') or item.get('entryPrice') or (old.entry_price if old else 0)); liq=float(item.get('liqPrice') or (old.liq_price if old else 0)); exchange[key]=old or Position(s,side,q,entry,int(time.time()*1000),position_idx=0,managed=managed,entry_count=self.store.lot_count(s,side)); exchange[key].qty=q; exchange[key].entry_price=entry; exchange[key].liq_price=liq; exchange[key].managed=managed; self.store.save_position(exchange[key])
    # Never silently forget a managed local position when an exit/order is still unresolved.
-   for key,old in self.positions.items():
-    if key not in exchange and (any(l.symbol==key[0] and l.side==key[1] for l in self.lots.values()) or any(p.action=='EXIT' and p.symbol==key[0] and p.side==key[1] and p.status in ACTIVE for p in self.pending.values())): exchange[key]=old
-    elif key not in exchange and old.managed: self.store.delete_position(*key)
+   for key,old in list(self.positions.items()):
+    if key in exchange: continue
+    local_lots=[l for l in self.lots.values() if l.symbol==key[0] and l.side==key[1] and l.status=='OPEN']
+    active_exit=any(p.action=='EXIT' and p.symbol==key[0] and p.side==key[1] and p.status in ACTIVE for p in self.pending.values())
+    if local_lots and any(getattr(l,'exit_reconciliation_required',False) for l in local_lots):
+     self.positions.pop(key,None); self.store.delete_position(*key)
+    elif local_lots and not active_exit:
+     # API position snapshots omit flat positions. A local lot without an exchange
+     # position is a reconciliation problem, not something to silently retry-close.
+     self._hold_exit_for_reconciliation(key[0],key[1],reason='local open lots exist but Bybit reports no open position',query_exchange=False,exchange_rows=raw_positions)
+    elif local_lots or active_exit: exchange[key]=old
+    elif old.managed: self.store.delete_position(*key)
    self.positions=exchange
    for oid,p in list(self.pending.items()):
     rows=self.bybit.get_order_history(order_id=oid,limit=1) if not oid.startswith('SUBMITTING:') else self.bybit.get_order_history(order_link_id=p.order_link_id,limit=1)
@@ -619,12 +707,21 @@ class Engine:
       age_s=(time.time()*1000-p.created_at_ms)/1000.0
       if age_s>=self.settings.stuck_order_timeout_seconds:
        if p.action=='EXIT':
-        # A retried close is reduceOnly -- it can only shrink/no-op, never open or
-        # flip a position, so it is safe to simply drop this and let it be retried.
-        log.error('EXIT order %s (%s %s) stuck SUBMITTING for %.0fs with no trace on Bybit -- dropping so it can be retried',oid,p.symbol,p.side,age_s)
-        self.store.event('EXIT_SUBMISSION_TIMEOUT',{'order_link_id':p.order_link_id,'age_s':age_s,'lot_id':p.lot_id},p.symbol,p.side)
-        self.telegram.send(f'⏱️ EXIT ORDER TIMED OUT\n{p.symbol} {p.side}\nNo confirmation from Bybit after {age_s:.0f}s.\nWill retry closing automatically.')
-        self._drop_pending(p)
+        has_matching_position=any(
+         x.get('symbol')==p.symbol and
+         (('LONG' if x.get('side')=='Buy' else 'SHORT' if x.get('side')=='Sell' else None)==p.side) and
+         float(x.get('size') or 0)>EPSILON for x in raw_positions
+        )
+        if not has_matching_position:
+         self._hold_exit_for_reconciliation(
+          p.symbol,p.side,reason='timed-out exit has no order history and no matching exchange position',
+          pending=p,query_exchange=False,exchange_rows=raw_positions
+         )
+        else:
+         log.error('EXIT order %s (%s %s) stuck SUBMITTING for %.0fs with no trace on Bybit -- dropping placeholder; exchange position remains open',oid,p.symbol,p.side,age_s)
+         self.store.event('EXIT_SUBMISSION_TIMEOUT',{'order_link_id':p.order_link_id,'age_s':age_s,'lot_id':p.lot_id},p.symbol,p.side)
+         self.telegram.send(f'⏱️ EXIT ORDER TIMED OUT\n{p.symbol} {p.side}\nNo order confirmation after {age_s:.0f}s, but Bybit reports an open position.\nPending placeholder cleared; reconciliation will re-evaluate before retrying.')
+         self._drop_pending(p)
        else:
         # A retried entry is NOT reduceOnly -- if the original order actually landed
         # on Bybit despite our client-side exception, retrying could double the
@@ -976,8 +1073,9 @@ class Engine:
    worst=max([(x.entry_price-price)/x.entry_price*100 for x in ls if x.entry_price>0] or [0.0])
    ready=sum(1 for x in ls if x.exit_armed and self._estimated_net(x,price)>0)
    held=sum(1 for x in ls if x.exit_armed and self._estimated_net(x,price)<=0)
-   ex='CLOSING+HELD' if (ready and held) else ('CLOSING' if ready else ('HELD(<0)' if held else '-'))
-   ex_k='g' if ready else ('y' if held else 'd')
+   review=any(getattr(x,'exit_reconciliation_required',False) for x in ls)
+   ex='REVIEW' if review else ('CLOSING+HELD' if (ready and held) else ('CLOSING' if ready else ('HELD(<0)' if held else '-')))
+   ex_k='y' if review else ('g' if ready else ('y' if held else 'd'))
    od=sorted({p.action for p in pend_all if p.symbol==s}); od_txt='/'.join(od) if od else '-'
    sl=f'{max(worst,0.0):.1f}/{st.stop_loss_pct:.0f}'; sl_k='r' if worst>=st.stop_loss_pct*0.6 else ('y' if worst>=st.stop_loss_pct*0.3 else None)
    pos.append({'sym':(short,'bw'),'lots':(len(ls),None),'avg':(self._hb_pxa(avg),None),'px':(self._hb_pxa(price),None),
