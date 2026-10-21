@@ -1073,8 +1073,9 @@ class Engine:
    worst=max([(x.entry_price-price)/x.entry_price*100 for x in ls if x.entry_price>0] or [0.0])
    ready=sum(1 for x in ls if x.exit_armed and self._estimated_net(x,price)>0)
    held=sum(1 for x in ls if x.exit_armed and self._estimated_net(x,price)<=0)
-   ex='CLOSING+HELD' if (ready and held) else ('CLOSING' if ready else ('HELD(<0)' if held else '-'))
-   ex_k='g' if ready else ('y' if held else 'd')
+   review=any(getattr(x,'exit_reconciliation_required',False) for x in ls)
+   ex='REVIEW' if review else ('CLOSING+HELD' if (ready and held) else ('CLOSING' if ready else ('HELD(<0)' if held else '-')))
+   ex_k='y' if review else ('g' if ready else ('y' if held else 'd'))
    od=sorted({p.action for p in pend_all if p.symbol==s}); od_txt='/'.join(od) if od else '-'
    sl=f'{max(worst,0.0):.1f}/{st.stop_loss_pct:.0f}'; sl_k='r' if worst>=st.stop_loss_pct*0.6 else ('y' if worst>=st.stop_loss_pct*0.3 else None)
    pos.append({'sym':(short,'bw'),'lots':(len(ls),None),'avg':(self._hb_pxa(avg),None),'px':(self._hb_pxa(price),None),
