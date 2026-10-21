@@ -158,9 +158,10 @@ class Engine:
   with self.lock:
    self._check_exits_locked(s,price,row)
  def _check_exits_locked(self,s,price,row=None):
-  # A local lot with unresolved exchange reconciliation must not drive another
-  # reduce-only request using a possibly stale quantity.
-  if any(x.symbol==s and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()): return
+  # Reconciliation holds block strategy closes that would use stale local lot
+  # quantities. A verified exchange position may still trigger the emergency
+  # liquidation-buffer guard below.
+  reconciliation_hold=any(x.symbol==s and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values())
   candle_ms=int(self.settings.timeframe)*60*1000
   current_candle_start=int(row['start']) if row is not None and 'start' in row else None
   merged=self.positions.get((s,'LONG'))
@@ -175,6 +176,8 @@ class Engine:
     self.telegram.send(f'⚠️ LIQUIDATION BUFFER EXIT\n{s} LONG\nPrice: {price:.8f}\nTrigger: {exit_price:.8f}\nClosing merged position.')
     self.request_close_merged(s,'LONG',merged.qty,price,'liquidation_buffer_exit')
     return
+  if reconciliation_hold:
+   return
   strategy_exit_allowed=_strategy_exit_allowed(self.settings,row)
   for lot in sorted([x for x in self.lots.values() if x.symbol==s and x.status=='OPEN'],key=lambda x:x.entry_time_ms):
    if any(p.action=='EXIT' and p.symbol==s and p.side==lot.side and p.status in ACTIVE for p in self.pending.values()): continue
@@ -511,7 +514,7 @@ class Engine:
    lot.exit_order_id=oid; self.store.save_lot(lot); self._replace_pending(p,oid)
  def request_close_merged(self,s,side,qty,price,reason):
   with self.lock:
-   if any(x.symbol==s and x.side==side and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()): return
+   if reason!='liquidation_buffer_exit' and any(x.symbol==s and x.side==side and x.status=='OPEN' and getattr(x,'exit_reconciliation_required',False) for x in self.lots.values()): return
    if any(p.action=='EXIT' and p.symbol==s and p.side==side and p.status in ACTIVE for p in self.pending.values()): return
    lots=[x for x in self.lots.values() if x.symbol==s and x.side==side and x.status=='OPEN']
    if not lots: return
@@ -641,6 +644,10 @@ class Engine:
      self.store.save_position(pos)
    except Exception as exc:
     query_error=str(exc)
+    # Do not leave a cached position masquerading as exchange-verified if the
+    # authoritative query failed. The local lot remains persisted for review.
+    self.positions.pop(key,None)
+    self.store.delete_position(s,side)
     log.exception('Could not verify %s %s after Bybit 110017 rejection',s,side)
    self.store.event('EXIT_RECONCILIATION_REQUIRED',{
     'reason':reason,'local_lots':len(lots),'exchange_qty':exchange_qty,
