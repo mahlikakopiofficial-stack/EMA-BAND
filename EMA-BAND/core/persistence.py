@@ -167,7 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms); CREATE INDEX IF NOT E
     # reads a filtered, recent slice of them back out.
     ALERT_KINDS=('EXIT_SUBMISSION_UNCERTAIN','ENTRY_SUBMISSION_UNCERTAIN','HARD_STOP_LOSS',
                  'LIQUIDATION_BUFFER_EXIT',
-                 'EXIT_SUBMISSION_TIMEOUT','ENTRY_SUBMISSION_TIMEOUT')
+                 'EXIT_SUBMISSION_TIMEOUT','ENTRY_SUBMISSION_TIMEOUT','EXIT_RECONCILIATION_REQUIRED')
 
     def recent_alerts(self,limit=30):
         placeholders=','.join('?'*len(self.ALERT_KINDS))
