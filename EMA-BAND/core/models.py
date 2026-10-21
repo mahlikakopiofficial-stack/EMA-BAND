@@ -13,7 +13,7 @@ class PendingOrder:
 @dataclass
 class EntryLot:
     lot_id:str; symbol:str; side:str; qty:float; entry_price:float; entry_time_ms:int
-    entry_order_id:str=''; cycle_id:str=''; entry_fee:float=0.0; status:str='OPEN'; exit_order_id:str=''; exit_fee:float=0.0; exit_armed:bool=False; entry_candle_start:int=0
+    entry_order_id:str=''; cycle_id:str=''; entry_fee:float=0.0; status:str='OPEN'; exit_order_id:str=''; exit_fee:float=0.0; exit_armed:bool=False; entry_candle_start:int=0; exit_reconciliation_required:bool=False
     def to_dict(self): return asdict(self)
 @dataclass
 class Trade:
